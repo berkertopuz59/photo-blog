@@ -175,7 +175,7 @@
     });
   }
 
-  // --- AI switches ---
+  // --- Settings switches ---
   document.querySelectorAll('[data-setting]').forEach((input) => {
     input.addEventListener('change', async () => {
       const res = await fetch('/admin/api/settings', {
@@ -184,6 +184,22 @@
         body: JSON.stringify({ key: input.dataset.setting, value: input.checked })
       }).catch(() => null);
       if (!res || !res.ok) input.checked = !input.checked;
+    });
+  });
+
+  document.querySelectorAll('[data-number-setting]').forEach((input) => {
+    let saved = input.value;
+    const output = input.parentElement.querySelector('output');
+    input.addEventListener('input', () => { output.textContent = `${input.value}%`; });
+    // On release, so dragging across the slider doesn't start a rebuild at every step
+    input.addEventListener('change', async () => {
+      const res = await fetch('/admin/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: input.dataset.numberSetting, value: Number(input.value) })
+      }).catch(() => null);
+      if (res && res.ok) saved = input.value;
+      else { input.value = saved; output.textContent = `${saved}%`; }
     });
   });
 

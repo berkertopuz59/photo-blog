@@ -9,7 +9,6 @@ import { ingest, processPhoto, encodeAvif } from '../lib/images.js';
 import { startWorker } from '../lib/worker.js';
 import { applyWatermark, loadWatermark, shootingLine } from '../lib/watermark.js';
 import { getSetting, setSetting } from '../lib/settings.js';
-import { photosView } from '../views/admin.js';
 
 const ART = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100" width="400" height="100"><rect width="400" height="100" fill="#fff"/></svg>';
 
@@ -31,6 +30,7 @@ describe('watermark', () => {
     dataDir = join(tmpDir, 'data');
     mkdirSync(join(dataDir, 'originals'), { recursive: true });
     db = openDb(join(dataDir, 'photos.sqlite'));
+    setSetting(db, 'watermark_opacity', '90');
   });
 
   afterEach(() => {
@@ -129,11 +129,36 @@ describe('watermark', () => {
     assert.equal(off.data.reduce((sum, value) => sum + value, 0), await render(false));
   });
 
-  test('the admin switch appears only with a watermark in place', () => {
-    const filters = { albumId: '', unpublished: false };
-    assert.ok(!photosView([], [], filters, 0, null).includes('watermark_exif'));
-    assert.ok(photosView([], [], filters, 0, { showExif: false }).includes('data-setting="watermark_exif"'));
-    assert.ok(photosView([], [], filters, 0, { showExif: true }).includes('data-setting="watermark_exif" checked'));
+  test('opacity sets the strength of the mark and changes the stamp', async () => {
+    writeFileSync(join(dataDir, 'watermark.svg'), ART);
+    const strong = await loadWatermark(db, dataDir);
+    assert.equal(strong.opacity, 0.9);
+    setSetting(db, 'watermark_opacity', '20');
+    const faint = await loadWatermark(db, dataDir);
+    assert.equal(faint.opacity, 0.2);
+    assert.notEqual(faint.stamp, strong.stamp);
+
+    const raw = { width: 1200, height: 800, channels: 3 };
+    const pixels = Buffer.alloc(1200 * 800 * 3, 60);
+    const change = async (art) => {
+      const { data, info } = await applyWatermark(pixels, raw, art, {});
+      let brightest = 0;
+      for (let i = 0; i < data.length; i += info.channels) brightest = Math.max(brightest, data[i]);
+      return brightest;
+    };
+    assert.ok(await change(faint) < await change(strong));
+  });
+
+  test('the default is subtle', async () => {
+    db.prepare("DELETE FROM settings WHERE key = 'watermark_opacity'").run();
+    writeFileSync(join(dataDir, 'watermark.svg'), ART);
+    assert.equal((await loadWatermark(db, dataDir)).opacity, 0.35);
+  });
+
+  test('the off switch removes the watermark even with the file in place', async () => {
+    writeFileSync(join(dataDir, 'watermark.svg'), ART);
+    setSetting(db, 'watermark_on', '0');
+    assert.equal(await loadWatermark(db, dataDir), null);
   });
 
   test('the shooting line drops what is missing and any crop factor note', () => {

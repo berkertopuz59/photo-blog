@@ -10,6 +10,7 @@ import { clientIp, visitorHash, rateLimit, verifyTurnstile, validateComment, can
 import { nowIso } from '../lib/db.js';
 import { derivedWidths } from '../lib/images.js';
 import { viewCounter, logEvent } from '../lib/stats.js';
+import { isOn } from '../lib/settings.js';
 import { publicViews } from '../views/public.js';
 
 const ID_RE = /^[0-9a-f]{16}$/;
@@ -52,6 +53,8 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
   }
 
   const count = viewCounter(db, config);
+  // Grid hearts follow the same switch as the button
+  const gridPhotos = (photos) => (isOn(db, 'likes_on') ? photos : photos.map((photo) => ({ ...photo, like_count: 0 })));
 
   function countView(c, kind, ref) {
     if (c.req.method !== 'GET') return;
@@ -177,7 +180,7 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
     const totalPages = Math.max(1, Math.ceil(total / perPage));
 
     countView(c, 'page', 'home');
-    const html = views.home({ albums, photos, page, totalPages });
+    const html = views.home({ albums, photos: gridPhotos(photos), page, totalPages });
     return c.html(html);
   });
 
@@ -219,7 +222,7 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
     if (!photos.length) return c.html(views.notFound(), 404);
 
     countView(c, 'tag', tag);
-    return c.html(views.albumDetail({ album: { title: tag, description: '' }, photos, photoCount: photos.length }));
+    return c.html(views.albumDetail({ album: { title: tag, description: '' }, photos: gridPhotos(photos), photoCount: photos.length }));
   });
 
   // Album detail
@@ -237,7 +240,7 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
 
     const photoCount = photos.length;
     countView(c, 'album', album.id);
-    const html = views.albumDetail({ album, photos, photoCount });
+    const html = views.albumDetail({ album, photos: gridPhotos(photos), photoCount });
     return c.html(html);
   });
 
@@ -292,6 +295,9 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
       photo, album, liked, likeCount, comments, prev, next,
       navQuery: fromLatest ? '?from=latest' : '',
       turnstileSiteKey: config.turnstileSiteKey,
+      showComments: isOn(db, 'comments_on'),
+      showLikes: isOn(db, 'likes_on'),
+      showFullSize: isOn(db, 'full_size_on'),
     });
     return c.html(html);
   });
@@ -328,6 +334,7 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
 
   // Like API
   app.post('/api/photos/:id/like', async (c) => {
+    if (!isOn(db, 'likes_on')) return c.json({ error: 'likes are off' }, 403);
     const id = c.req.param('id');
     if (!ID_RE.test(id)) return c.json({ error: 'not found' }, 404);
 
@@ -348,6 +355,7 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
   });
 
   app.delete('/api/photos/:id/like', async (c) => {
+    if (!isOn(db, 'likes_on')) return c.json({ error: 'likes are off' }, 403);
     const id = c.req.param('id');
     if (!ID_RE.test(id)) return c.json({ error: 'not found' }, 404);
 
@@ -371,6 +379,7 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
   app.post('/api/photos/:id/comments',
     bodyLimit({ maxSize: 8 * 1024, onError: (c) => c.json({ error: 'too large' }, 413) }),
     async (c) => {
+      if (!isOn(db, 'comments_on')) return c.json({ error: 'comments are off' }, 403);
       const id = c.req.param('id');
       if (!ID_RE.test(id)) return c.json({ error: 'not found' }, 404);
 

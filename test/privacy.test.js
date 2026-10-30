@@ -311,6 +311,11 @@ describe('AI switches', () => {
     assert.equal((await post(app, sid, '/admin/api/settings', { key: 'ai_privacy', value: false })).status, 200);
     assert.equal(getSetting(db, 'ai_privacy'), '0');
     assert.equal((await post(app, sid, '/admin/api/settings', { key: 'admin', value: true })).status, 400);
+    assert.equal((await post(app, sid, '/admin/api/settings', { key: 'watermark_opacity', value: 25 })).status, 200);
+    assert.equal(getSetting(db, 'watermark_opacity'), '25');
+    for (const value of [5, 101, 40.5, '40', true]) {
+      assert.equal((await post(app, sid, '/admin/api/settings', { key: 'watermark_opacity', value })).status, 400);
+    }
     assert.equal((await post(app, '', '/admin/api/settings', { key: 'ai_privacy', value: true })).status, 401);
     assert.equal((await app.request('/admin/privacy', { headers: { cookie: sid } })).status, 200);
   });

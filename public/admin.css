@@ -234,3 +234,11 @@ input[type="text"]:focus, input[type="password"]:focus, select:focus { border-co
 
 .album-count { white-space: nowrap; }
 .album-count a { display: block; margin-top: 4px; color: var(--accent); font-size: 12px; }
+.settings-note { color: var(--muted); font-size: 14px; margin: 12px 0 0; }
+.settings-warning { margin: 16px 0 0; padding: 12px 14px; border: 1px solid var(--accent); border-radius: 2px; font-size: 14px; }
+.settings-site { margin: 12px 0 0; font-size: 14px; }
+.settings-site div { display: flex; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.settings-site dt { width: 96px; flex: none; color: var(--muted); }
+.settings-site dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.ai-switch input[type="range"] { width: 180px; accent-color: var(--accent); }
+.ai-switch output { min-width: 40px; color: var(--muted); }

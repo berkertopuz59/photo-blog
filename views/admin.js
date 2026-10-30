@@ -36,12 +36,15 @@ function statList(title, rows, empty) {
   return `<div class="stat-list"><h2>${escapeHtml(title)}</h2>${items ? `<ol>${items}</ol>` : `<p>${escapeHtml(empty)}</p>`}</div>`;
 }
 
-function aiSwitch({ key, configured, enabled, calls }, label) {
-  if (!configured) return '<p class="ai-panel">AI is not set up. Add CAPTION_API_URL, CAPTION_API_KEY and CAPTION_MODEL to turn it on.</p>';
+function settingSwitch(key, on, label, note = '') {
   return `<div class="ai-panel">
-  <label class="ai-switch"><span class="switch"><input type="checkbox" data-setting="${escapeHtml(key)}"${enabled ? ' checked' : ''}><span></span></span> ${escapeHtml(label)}</label>
-  <span class="ai-calls">${calls.today} AI calls today \u00b7 ${calls.month} this month</span>
+  <label class="ai-switch"><span class="switch"><input type="checkbox" data-setting="${escapeHtml(key)}"${on ? ' checked' : ''}><span></span></span> ${escapeHtml(label)}</label>
+  ${note ? `<span class="ai-calls">${escapeHtml(note)}</span>` : ''}
 </div>`;
+}
+
+function aiStatus(on, label) {
+  return `<p class="ai-panel"><span>${escapeHtml(label)} ${on ? 'on' : 'off'}</span><a href="/admin/settings">Settings</a></p>`;
 }
 
 function nav(pendingCount = 0) {
@@ -53,6 +56,7 @@ function nav(pendingCount = 0) {
   <a href="/admin/captions">Captions</a>
   <a href="/admin/privacy">Privacy</a>
   <a href="/admin/stats">Stats</a>
+  <a href="/admin/settings">Settings</a>
   <form method="POST" action="/admin/logout" class="inline-form"><button type="submit" class="btn btn-sm">Logout</button></form>
 </nav>`;
 }
@@ -95,16 +99,7 @@ ${queuePanel}
 </body></html>`;
 }
 
-// Only with a watermark in place, since the setting means nothing without one
-function watermarkSwitch(watermark) {
-  if (!watermark) return '';
-  return `<div class="ai-panel">
-  <label class="ai-switch"><span class="switch"><input type="checkbox" data-setting="watermark_exif"${watermark.showExif ? ' checked' : ''}><span></span></span> Camera settings under the watermark</label>
-  <span class="ai-calls">Changing this rebuilds your photos one at a time</span>
-</div>`;
-}
-
-export function photosView(photos, albums, filters, pendingCount = 0, watermark = null) {
+export function photosView(photos, albums, filters, pendingCount = 0) {
   const albumOpts = albums.map(a =>
     `<option value="${a.id}"${filters.albumId == a.id ? ' selected' : ''}>${escapeHtml(a.title)}</option>`
   ).join('');
@@ -124,7 +119,6 @@ export function photosView(photos, albums, filters, pendingCount = 0, watermark 
 ${nav(pendingCount)}
 <main class="admin-main">
 <h1>Photos</h1>
-${watermarkSwitch(watermark)}
 <div class="filters">
   <label><input type="checkbox" id="select-all"> Select all</label>
   <label><input type="checkbox" id="filter-unpub" ${filters.unpublished ? 'checked' : ''}> Unpublished only</label>
@@ -212,6 +206,52 @@ ${nav(pendingCount)}
 </body></html>`;
 }
 
+function siteRow(label, value) {
+  return value ? `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>` : '';
+}
+
+export function settingsView({ switches, watermark, ai, site }, pendingCount = 0) {
+  const calls = ({ today, month }) => `${today} AI calls today \u00b7 ${month} this month`;
+  const rebuild = 'Changing this rebuilds your photos one at a time';
+  const waterStatus = !watermark.hasFile
+    ? '<p class="settings-note">No watermark file yet. Put a transparent SVG at <code>data/watermark.svg</code> to sign your photos.</p>'
+    : switches.watermark_on ? `<p class="settings-note">${watermark.done} of ${watermark.total} photos have the current watermark.</p>` : '';
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Settings</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<body class="admin-body">
+${nav(pendingCount)}
+<main class="admin-main">
+<h1>Settings</h1>
+${site.testKeys ? '<p class="settings-warning">Bot protection is using test keys, so it lets everything through. Add your own TURNSTILE_SITE_KEY and TURNSTILE_SECRET.</p>' : ''}
+<h2>Watermark</h2>
+${watermark.hasFile ? `${settingSwitch('watermark_on', switches.watermark_on, 'Sign public photos', rebuild)}
+${settingSwitch('watermark_exif', switches.watermark_exif, 'Camera settings under the signature', rebuild)}
+<div class="ai-panel">
+  <label class="ai-switch">Opacity <input type="range" min="10" max="100" step="5" value="${watermark.opacity}" data-number-setting="watermark_opacity"> <output>${watermark.opacity}%</output></label>
+  <span class="ai-calls">${rebuild}</span>
+</div>` : ''}
+${waterStatus}
+<h2>AI</h2>
+${ai.configured ? `<p class="settings-note">Model: ${escapeHtml(ai.model)}. Turned-on features send your photos to this API.</p>
+${settingSwitch('ai_captions', switches.ai_captions, 'Draft titles and descriptions', calls(ai.captions))}
+${settingSwitch('ai_privacy', switches.ai_privacy, 'Scan for faces and license plates', calls(ai.privacy))}` : '<p class="settings-note">AI is not set up. Add CAPTION_API_URL, CAPTION_API_KEY and CAPTION_MODEL to turn it on.</p>'}
+<h2>Visitors</h2>
+${settingSwitch('comments_on', switches.comments_on, 'Accept comments', 'Approved comments stay visible when this is off')}
+${settingSwitch('likes_on', switches.likes_on, 'Show likes', 'Counts are kept when this is off')}
+${settingSwitch('full_size_on', switches.full_size_on, 'Show the Full size link', 'Hides the link only, images stay as they are')}
+<h2>Site</h2>
+<p class="settings-note">These come from your .env file.</p>
+<dl class="settings-site">
+${siteRow('Title', site.title)}
+${siteRow('Tagline', site.tagline)}
+${siteRow('Address', site.url)}
+${siteRow('Blog', site.blog)}
+</dl>
+</main>
+<script src="${assets.adminJs}" defer></script>
+</body></html>`;
+}
+
 export function statsView({ library, traffic, events, storage }, pendingCount = 0) {
   const peak = Math.max(1, ...traffic.days.map(d => d.views));
   const bars = traffic.days.map(d => `<div class="day-bar" title="${escapeHtml(d.day)}: ${d.views} views"><span style="height:${Math.round((d.views / peak) * 100)}%"></span><small>${escapeHtml(d.day.slice(8))}</small></div>`).join('');
@@ -271,7 +311,7 @@ ${eventRows ? `<div class="stats-scroll"><table class="stats-table"><thead><tr><
 </body></html>`;
 }
 
-export function captionsView(drafts, { ai, approved = false }, pendingCount = 0) {
+export function captionsView(drafts, { aiOn, approved = false }, pendingCount = 0) {
   const rows = drafts.map(d => `
     <div class="caption-draft" data-id="${escapeHtml(d.id)}">
       <img src="/admin/img/${escapeHtml(d.id)}/480.webp" alt="" loading="lazy">
@@ -298,7 +338,7 @@ ${nav(pendingCount)}
 <main class="admin-main">
 <h1>Captions</h1>
 <p>${escapeHtml(intro)}</p>
-${aiSwitch(ai, 'AI captions')}
+${aiStatus(aiOn, 'AI captions are')}
 <nav class="caption-tabs"><a href="/admin/captions"${approved ? '' : ' aria-current="page"'}>To review</a><a href="/admin/captions?view=approved"${approved ? ' aria-current="page"' : ''}>Approved</a></nav>
 ${rows && !approved ? `<div class="caption-toolbar"><span id="caption-count">${drafts.length} to review</span><button class="btn btn-sm" id="caption-approve-all">Approve all</button></div>` : ''}
 <div id="caption-list" data-view="${approved ? 'approved' : 'review'}">${rows || `<p class="caption-empty">${approved ? 'Nothing approved yet.' : 'No drafts to review.'}</p>`}</div>
@@ -307,7 +347,7 @@ ${rows && !approved ? `<div class="caption-toolbar"><span id="caption-count">${d
 </body></html>`;
 }
 
-export function privacyView(photos, { ai, reviewed }, pendingCount = 0) {
+export function privacyView(photos, { aiOn, reviewed }, pendingCount = 0) {
   const rows = photos.map(p => {
     const scan = p.privacy_scan === 'done' ? `${p.boxes.length} found by AI` : p.privacy_scan === 'failed' ? 'AI scan failed, check by hand' : 'Not scanned';
     return `
@@ -331,7 +371,7 @@ ${nav(pendingCount)}
 <h1>Privacy</h1>
 <p>Blurred areas are baked into every public version. Your original stays private. New photos stay offline until you approve them here.</p>
 <p class="privacy-help">Click a box to turn its blur off or on. Drag on the photo to add a box.</p>
-${aiSwitch(ai, 'AI face and plate scan')}
+${aiStatus(aiOn, 'The AI face and plate scan is')}
 <nav class="caption-tabs"><a href="/admin/privacy"${reviewed ? '' : ' aria-current="page"'}>To review</a><a href="/admin/privacy?view=reviewed"${reviewed ? ' aria-current="page"' : ''}>Reviewed</a></nav>
 ${rows && !reviewed ? `<div class="caption-toolbar"><span id="privacy-count">${photos.length} to review</span><button class="btn btn-sm" id="privacy-approve-all">Approve all</button></div>` : ''}
 <div id="privacy-list" data-view="${reviewed ? 'reviewed' : 'review'}">${rows || `<p class="caption-empty">${reviewed ? 'Nothing reviewed yet.' : 'All photos are reviewed.'}</p>`}</div>

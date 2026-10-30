@@ -9,13 +9,13 @@ import { captionDrafts, approvedCaptions, cleanLabels } from '../lib/captions.js
 import { privacyList, reviewPhoto } from '../lib/privacy.js';
 import { previewPath } from '../lib/images.js';
 import { loadWatermark } from '../lib/watermark.js';
-import { SETTING_KEYS, aiCalls, aiConfigured, getSetting, setSetting } from '../lib/settings.js';
+import { NUMBER_SETTINGS, SETTING_KEYS, aiCalls, aiConfigured, aiEnabled, getSetting, isOn, setSetting } from '../lib/settings.js';
 import { logEvent, queueStats, libraryStats, trafficStats, recentEvents } from '../lib/stats.js';
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { readFile, readdir, stat, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getConnInfo } from '@hono/node-server/conninfo';
-import { adminView, loginView, photosView, albumsView, commentsView, statsView, captionsView, privacyView, IMG_ID_RE, IMG_FILE_RE } from '../views/admin.js';
+import { adminView, loginView, photosView, albumsView, commentsView, statsView, captionsView, privacyView, settingsView, IMG_ID_RE, IMG_FILE_RE } from '../views/admin.js';
 import { escapeHtml } from '../views/html.js';
 
 const PHOTO_ID_RE = /^[a-f0-9]{16}$/;
@@ -200,8 +200,7 @@ export function adminRoutes({ db, config, dataDir }) {
     sql += ' ORDER BY p.created_at DESC';
     const photos = db.prepare(sql).all(...params);
     const albums = db.prepare('SELECT id, title FROM albums ORDER BY title').all();
-    const watermark = await loadWatermark(db, dataDir);
-    return c.html(photosView(photos, albums, { albumId, unpublished }, pendingCount(), watermark));
+    return c.html(photosView(photos, albums, { albumId, unpublished }, pendingCount()));
   });
 
   app.get('/albums', async (c) => {
@@ -223,13 +222,25 @@ export function adminRoutes({ db, config, dataDir }) {
     return c.html(commentsView(pending, all));
   });
 
-  function aiPanel(key, lane) {
-    return { key, configured: aiConfigured(config), enabled: getSetting(db, key) === '1', calls: aiCalls(db, lane) };
-  }
+  app.get('/settings', async (c) => {
+    const stamp = (await loadWatermark(db, dataDir))?.stamp ?? null;
+    const count = (sql, ...args) => db.prepare(sql).get(...args).n;
+    return c.html(settingsView({
+      switches: Object.fromEntries(SETTING_KEYS.map((key) => [key, isOn(db, key)])),
+      watermark: {
+        hasFile: existsSync(join(dataDir, 'watermark.svg')),
+        opacity: Number(getSetting(db, 'watermark_opacity')),
+        done: stamp ? count('SELECT COUNT(*) AS n FROM photos WHERE status = \'ready\' AND watermark = ?', stamp) : 0,
+        total: count("SELECT COUNT(*) AS n FROM photos WHERE status <> 'failed'"),
+      },
+      ai: { configured: aiConfigured(config), model: config.captionModel, captions: aiCalls(db, 'captions'), privacy: aiCalls(db, 'privacy') },
+      site: { title: config.siteTitle, tagline: config.siteTagline, url: config.siteUrl, blog: config.blogUrl, testKeys: config.turnstileTestKeys },
+    }, pendingCount()));
+  });
 
   app.get('/privacy', (c) => {
     const reviewed = c.req.query('view') === 'reviewed';
-    return c.html(privacyView(privacyList(db, { reviewed }), { ai: aiPanel('ai_privacy', 'privacy'), reviewed }, pendingCount()));
+    return c.html(privacyView(privacyList(db, { reviewed }), { aiOn: aiEnabled(db, config, 'ai_privacy'), reviewed }, pendingCount()));
   });
 
   // The unblurred review copy, for the admin only
@@ -250,7 +261,7 @@ export function adminRoutes({ db, config, dataDir }) {
   app.get('/captions', (c) => {
     const approved = c.req.query('view') === 'approved';
     return c.html(captionsView(approved ? approvedCaptions(db) : captionDrafts(db), {
-      ai: aiPanel('ai_captions', 'captions'),
+      aiOn: aiEnabled(db, config, 'ai_captions'),
       approved,
     }, pendingCount()));
   });
@@ -321,6 +332,12 @@ export function adminRoutes({ db, config, dataDir }) {
 
   app.post('/api/settings', async (c) => {
     const body = await c.req.json().catch(() => null);
+    const range = NUMBER_SETTINGS[body?.key];
+    if (range) {
+      if (!Number.isInteger(body.value) || body.value < range.min || body.value > range.max) return c.json({ error: 'invalid' }, 400);
+      setSetting(db, body.key, String(body.value));
+      return c.json({ ok: true });
+    }
     if (!SETTING_KEYS.includes(body?.key) || typeof body.value !== 'boolean') return c.json({ error: 'invalid' }, 400);
     setSetting(db, body.key, body.value ? '1' : '0');
     return c.json({ ok: true });

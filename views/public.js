@@ -161,7 +161,7 @@ function shell(title, bodyContent, opts = {}) {
       return shell(album.title, content);
     },
 
-    photoDetail({ photo, album, liked, likeCount, comments, prev, next, navQuery = '', turnstileSiteKey }) {
+    photoDetail({ photo, album, liked, likeCount, comments, prev, next, navQuery = '', turnstileSiteKey, showComments = true, showLikes = true, showFullSize = true }) {
       const takenAt = photo.taken_at ? formatDate(photo.taken_at) : null;
 
       // EXIF definition list
@@ -244,10 +244,10 @@ function shell(title, bodyContent, opts = {}) {
 </section>`;
 
       // Left column
-      const leftCol = `<div class="photo-left">${caption}${metaLine}${exifDl}<div class="photo-actions">${likeBtn}${fullSize}</div></div>`;
+      const leftCol = `<div class="photo-left">${caption}${metaLine}${exifDl}<div class="photo-actions">${showLikes ? likeBtn : ''}${showFullSize ? fullSize : ''}</div></div>`;
 
       // Right column
-      const rightCol = `<div class="photo-right">${commentsHtml}${commentForm}</div>`;
+      const rightCol = `<div class="photo-right">${commentsHtml}${showComments ? commentForm : ''}</div>`;
 
       const content = `<article class="photo-page">${backLink}${stage}${touchNav}<div class="photo-columns">${leftCol}${rightCol}</div></article>`;
 
