@@ -1,0 +1,12 @@
+services:
+  photos:
+    build: .
+    container_name: photos
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - 127.0.0.1:3000:3000
+    volumes:
+      - ./data:/data
+    mem_limit: 1g
+    cpus: 1.5

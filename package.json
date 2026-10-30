@@ -1,0 +1,19 @@
+{
+  "name": "photo-blog",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "author": "Ilkin Berker Topuz",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "better-sqlite3": "^12",
+    "heic-convert": "^2",
+    "hono": "^4",
+    "sharp": "^0.35.5"
+  }
+}
