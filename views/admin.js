@@ -227,9 +227,13 @@ ${site.testKeys ? '<p class="settings-warning">Bot protection is using test keys
 ${watermark.hasFile ? `${settingSwitch('watermark_on', switches.watermark_on, 'Sign public photos', rebuild)}
 ${settingSwitch('watermark_exif', switches.watermark_exif, 'Camera settings under the signature', rebuild)}
 <div class="ai-panel">
-  <label class="ai-switch">Opacity <input type="range" min="10" max="100" step="5" value="${watermark.opacity}" data-number-setting="watermark_opacity"> <output>${watermark.opacity}%</output></label>
-  <span class="ai-calls">${rebuild}</span>
-</div>` : ''}
+  <label class="ai-switch">Opacity <input type="range" min="1" max="100" step="1" value="${watermark.opacity}" data-number-setting="watermark_opacity"> <output>${watermark.opacity}%</output></label>
+  <button type="button" class="btn btn-sm" id="watermark-apply" disabled>Apply</button>
+</div>
+${switches.watermark_on ? `<figure class="settings-preview">
+  <img id="watermark-preview" src="/admin/watermark-preview?opacity=${watermark.opacity}" alt="Your watermark on one of your photos">
+  <figcaption><span>Preview. Nothing changes on the site until you press Apply, which rebuilds your photos one at a time.</span><button type="button" class="btn btn-sm" id="watermark-preview-next">Try another photo</button></figcaption>
+</figure>` : ''}` : ''}
 ${waterStatus}
 <h2>AI</h2>
 ${ai.configured ? `<p class="settings-note">Model: ${escapeHtml(ai.model)}. Turned-on features send your photos to this API.</p>

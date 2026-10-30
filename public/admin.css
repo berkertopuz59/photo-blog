@@ -36,6 +36,8 @@ input[type="text"]:focus, input[type="password"]:focus, select:focus { border-co
 
 .btn { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); padding: 9px 16px; border-radius: 2px; cursor: pointer; font: 500 14px/1.2 Inter, sans-serif; }
 .btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:disabled:hover { border-color: var(--line); }
 .btn-sm { padding: 6px 12px; font-size: 13px; }
 .btn-danger { color: var(--danger); }
 .btn-danger:hover { border-color: var(--danger); }
@@ -242,3 +244,6 @@ input[type="text"]:focus, input[type="password"]:focus, select:focus { border-co
 .settings-site dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .ai-switch input[type="range"] { width: 180px; accent-color: var(--accent); }
 .ai-switch output { min-width: 40px; color: var(--muted); }
+.settings-preview { margin: 12px 0 0; }
+.settings-preview img { display: block; max-width: 100%; max-height: 420px; margin: 0 auto; }
+.settings-preview figcaption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 8px; color: var(--muted); font-size: 13px; }

@@ -7,8 +7,8 @@ import { slugify } from '../lib/slug.js';
 import { nowIso } from '../lib/db.js';
 import { captionDrafts, approvedCaptions, cleanLabels } from '../lib/captions.js';
 import { privacyList, reviewPhoto } from '../lib/privacy.js';
-import { previewPath } from '../lib/images.js';
-import { loadWatermark } from '../lib/watermark.js';
+import { ensurePreview, previewPath } from '../lib/images.js';
+import { loadWatermark, watermarkPreview } from '../lib/watermark.js';
 import { NUMBER_SETTINGS, SETTING_KEYS, aiCalls, aiConfigured, aiEnabled, getSetting, isOn, setSetting } from '../lib/settings.js';
 import { logEvent, queueStats, libraryStats, trafficStats, recentEvents } from '../lib/stats.js';
 import { existsSync, rmSync } from 'node:fs';
@@ -220,6 +220,28 @@ export function adminRoutes({ db, config, dataDir }) {
       `SELECT c.*, p.id AS pid FROM comments c LEFT JOIN photos p ON c.photo_id = p.id WHERE c.status != 'pending' ORDER BY c.created_at DESC LIMIT 100`
     ).all();
     return c.html(commentsView(pending, all));
+  });
+
+  // Tries an opacity on a real photo without saving it, so moving the slider rebuilds nothing
+  app.get('/watermark-preview', async (c) => {
+    const watermark = await loadWatermark(db, dataDir);
+    const photos = db.prepare("SELECT COUNT(*) AS n FROM photos WHERE status = 'ready'").get().n;
+    if (!watermark || !photos) return c.text('Not found', 404);
+
+    const { min, max } = NUMBER_SETTINGS.watermark_opacity;
+    const percent = Number(c.req.query('opacity'));
+    if (Number.isInteger(percent) && percent >= min && percent <= max) watermark.opacity = percent / 100;
+
+    const skip = (parseInt(c.req.query('photo'), 10) || 0) % photos;
+    const row = db.prepare("SELECT * FROM photos WHERE status = 'ready' ORDER BY COALESCE(published_at, created_at) DESC, id LIMIT 1 OFFSET ?").get(Math.abs(skip));
+    try {
+      await ensurePreview(dataDir, row);
+      const image = await watermarkPreview(previewPath(dataDir, row.id), watermark, row);
+      c.header('Content-Type', 'image/jpeg');
+      return c.body(image);
+    } catch {
+      return c.text('Not found', 404);
+    }
   });
 
   app.get('/settings', async (c) => {

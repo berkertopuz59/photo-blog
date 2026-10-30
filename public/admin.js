@@ -187,19 +187,43 @@
     });
   });
 
+  // The slider only moves the preview. Apply saves it, because saving rebuilds every photo.
   document.querySelectorAll('[data-number-setting]').forEach((input) => {
     let saved = input.value;
+    let photo = 0;
+    let timer = null;
     const output = input.parentElement.querySelector('output');
-    input.addEventListener('input', () => { output.textContent = `${input.value}%`; });
-    // On release, so dragging across the slider doesn't start a rebuild at every step
-    input.addEventListener('change', async () => {
+    const preview = document.getElementById('watermark-preview');
+    const apply = document.getElementById('watermark-apply');
+    const showPreview = () => {
+      if (preview) preview.src = `/admin/watermark-preview?opacity=${input.value}&photo=${photo}`;
+    };
+    const refresh = () => {
+      output.textContent = `${input.value}%`;
+      apply.disabled = input.value === saved;
+    };
+    input.addEventListener('input', () => {
+      refresh();
+      clearTimeout(timer);
+      timer = setTimeout(showPreview, 250);
+    });
+    document.getElementById('watermark-preview-next')?.addEventListener('click', () => {
+      photo += 1;
+      showPreview();
+    });
+    apply.addEventListener('click', async () => {
+      apply.disabled = true;
       const res = await fetch('/admin/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: input.dataset.numberSetting, value: Number(input.value) })
       }).catch(() => null);
       if (res && res.ok) saved = input.value;
-      else { input.value = saved; output.textContent = `${saved}%`; }
+      else {
+        input.value = saved;
+        showPreview();
+      }
+      refresh();
     });
   });
 

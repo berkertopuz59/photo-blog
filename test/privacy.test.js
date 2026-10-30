@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Hono } from 'hono';
 import sharp from 'sharp';
@@ -305,6 +305,32 @@ describe('AI switches', () => {
     stop();
   });
 
+  it('settings page loads and the preview tries an opacity without saving it', async () => {
+    const { app, db, dataDir } = setup();
+    const sid = await login(app);
+    const get = (path, cookie = sid) => app.request(path, { headers: { cookie } });
+    assert.equal((await get('/admin/settings')).status, 200);
+    assert.equal((await get('/admin/watermark-preview')).status, 404);
+
+    writeFileSync(join(dataDir, 'watermark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100" width="400" height="100"><rect width="400" height="100" fill="#fff"/></svg>');
+    assert.equal((await get('/admin/watermark-preview')).status, 404);
+
+    const { id } = await ingest(db, dataDir, CHECKER, 'a.jpg');
+    await processPhoto(db, dataDir, id);
+    const image = async (query) => {
+      const res = await get(`/admin/watermark-preview?${query}`);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'image/jpeg');
+      assert.equal(res.headers.get('cache-control'), 'no-store');
+      return Buffer.from(await res.arrayBuffer());
+    };
+    assert.ok(!(await image('opacity=1')).equals(await image('opacity=100')));
+    assert.ok((await image('opacity=0')).equals(await image('')), 'out of range falls back to the saved value');
+    assert.ok((await image('photo=7')).length > 0);
+    assert.equal(getSetting(db, 'watermark_opacity'), '35');
+    assert.equal((await get('/admin/watermark-preview', '')).status, 302);
+  });
+
   it('switch route accepts only known settings and needs a session', async () => {
     const { app, db } = setup();
     const sid = await login(app);
@@ -313,7 +339,7 @@ describe('AI switches', () => {
     assert.equal((await post(app, sid, '/admin/api/settings', { key: 'admin', value: true })).status, 400);
     assert.equal((await post(app, sid, '/admin/api/settings', { key: 'watermark_opacity', value: 25 })).status, 200);
     assert.equal(getSetting(db, 'watermark_opacity'), '25');
-    for (const value of [5, 101, 40.5, '40', true]) {
+    for (const value of [0, 101, 40.5, '40', true]) {
       assert.equal((await post(app, sid, '/admin/api/settings', { key: 'watermark_opacity', value })).status, 400);
     }
     assert.equal((await post(app, '', '/admin/api/settings', { key: 'ai_privacy', value: true })).status, 401);

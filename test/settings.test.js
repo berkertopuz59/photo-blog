@@ -25,8 +25,14 @@ describe('settings page', () => {
   });
 
   it('shows the opacity slider with its value', () => {
-    assert.ok(page().includes('value="35" data-number-setting="watermark_opacity"'));
+    assert.ok(page().includes('min="1" max="100" step="1" value="35" data-number-setting="watermark_opacity"'));
     assert.ok(page().includes('35%'));
+    assert.ok(page().includes('id="watermark-apply" disabled'));
+  });
+
+  it('shows the preview only while signing is on', () => {
+    assert.ok(page().includes('/admin/watermark-preview?opacity=35'));
+    assert.ok(!page({ switches: { ...on, watermark_on: false } }).includes('watermark-preview'));
   });
 
   it('shows AI switches only when AI is set up', () => {
