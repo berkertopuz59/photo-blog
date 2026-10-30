@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { openDb } from '../lib/db.js';
 import { ingest, processPhoto, encodeAvif } from '../lib/images.js';
 import { startWorker } from '../lib/worker.js';
-import { applyWatermark, loadWatermark, shootingLine } from '../lib/watermark.js';
+import { applyWatermark, loadWatermark, shootingLine, watermarkPreview } from '../lib/watermark.js';
 import { getSetting, setSetting } from '../lib/settings.js';
 
 const ART = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100" width="400" height="100"><rect width="400" height="100" fill="#fff"/></svg>';
@@ -147,6 +147,17 @@ describe('watermark', () => {
       return brightest;
     };
     assert.ok(await change(faint) < await change(strong));
+  });
+
+  test('the preview is a close-up of the signature, not the whole photo', async () => {
+    writeFileSync(join(dataDir, 'watermark.svg'), ART);
+    const path = join(tmpDir, 'photo.jpg');
+    writeFileSync(path, await grey(60));
+    const preview = await watermarkPreview(path, await loadWatermark(db, dataDir), {});
+    const { width, height } = await sharp(preview).metadata();
+    assert.ok(width < 600 && height < 400, `${width}x${height}`);
+    const { channels } = await sharp(preview).stats();
+    assert.ok(channels[0].max > 200, 'the signature is in the crop');
   });
 
   test('the default is subtle', async () => {

@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import { openDb } from '../lib/db.js';
 import { hashPassword } from '../lib/auth.js';
 import { ingest, processPhoto, encodeAvif } from '../lib/images.js';
+import { privacyView } from '../views/admin.js';
 import { cleanBoxes, parseScanReply, scanPhoto, reviewPhoto, privacyList } from '../lib/privacy.js';
 import { aiCalls, aiEnabled, getSetting, setSetting } from '../lib/settings.js';
 import { startWorker } from '../lib/worker.js';
@@ -303,6 +304,23 @@ describe('AI switches', () => {
     assert.equal(aiEnabled(db, {}, 'ai_privacy'), false);
     const stop = startCaptionWorker(db, dataDir, api, { intervalMs: 5 });
     stop();
+  });
+
+  it('review pages render with photos in them', async () => {
+    const { app, db, dataDir } = setup();
+    const sid = await login(app);
+    const { id } = await ingest(db, dataDir, CHECKER, 'a.jpg');
+    await processPhoto(db, dataDir, id);
+    db.prepare("UPDATE photos SET caption_draft = 'Draft' WHERE id = ?").run(id);
+    for (const path of ['/admin/privacy', '/admin/privacy?view=reviewed', '/admin/captions', '/admin/captions?view=approved', '/admin/photos', '/admin/albums', '/admin/settings', '/admin/stats', '/admin/comments']) {
+      assert.equal((await app.request(path, { headers: { cookie: sid } })).status, 200, path);
+    }
+    const page = await (await app.request('/admin/privacy', { headers: { cookie: sid } })).text();
+    assert.ok(page.includes('a.jpg'));
+    assert.ok(!page.includes('data-privacy-action="rescan"'), 'no rescan button while the scan is off');
+
+    const list = privacyList(db, { reviewed: false });
+    assert.ok(privacyView(list, { aiOn: true, reviewed: false }).includes('data-privacy-action="rescan"'));
   });
 
   it('settings page loads and the preview tries an opacity without saving it', async () => {

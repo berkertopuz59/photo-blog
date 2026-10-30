@@ -362,7 +362,7 @@ export function privacyView(photos, { aiOn, reviewed }, pendingCount = 0) {
         <p class="privacy-scan">${escapeHtml(scan)}${p.is_published && p.privacy_ok ? ' \u00b7 live' : ''}</p>
         <div class="caption-actions">
           <button class="btn btn-sm btn-approve" data-privacy-action="approve">${reviewed ? 'Save' : 'Approve'}</button>
-          ${ai.configured && ai.enabled ? '<button class="btn btn-sm" data-privacy-action="rescan">Scan again</button>' : ''}
+          ${aiOn ? '<button class="btn btn-sm" data-privacy-action="rescan">Scan again</button>' : ''}
         </div>
       </div>
     </div>`;
