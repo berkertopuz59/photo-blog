@@ -10,6 +10,7 @@ A small self-hosted photo site with albums. Upload from a private admin page and
 - **Stats without tracking:** views per photo, countries, referrers and a 30-day failure log, with no IP addresses or analytics cookies
 - **AI drafts, optional:** any OpenAI-compatible vision model suggests a title, description, tags and moods, and nothing goes public until you approve it
 - **Privacy review:** an optional AI scan proposes face and license plate blurs, you adjust them, and new photos stay offline until approved
+- **Your signature, optional:** a transparent SVG becomes a watermark, placed in the calmer bottom corner in light or dark ink, with camera settings under it if you want them
 - **Works on phones:** swipe between photos, and the admin works there too
 
 Built with Node 22, Hono, SQLite, sharp and exiftool. No build step and no frontend framework.
@@ -30,6 +31,10 @@ docker compose up -d --build
 ```
 
 The site listens on `127.0.0.1:3000`. Put a reverse proxy with HTTPS in front of it. The admin is at `/admin`. Publishing a photo also publishes its album.
+
+## Watermark
+
+Put a transparent SVG at `data/watermark.svg`. Its shape is used and its colors are ignored. The worker then rebuilds every photo one at a time, and it does so again if you change or remove the file. Originals stay clean. Without the file, photos have no watermark. A switch on the admin Photos page adds the camera settings under it.
 
 ## Before you go live
 

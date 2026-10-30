@@ -609,6 +609,11 @@ body.lightbox-open { overflow: hidden; }
 .lb-close { top: calc(10px + env(safe-area-inset-top)); right: 10px; }
 .lb-prev { top: 50%; left: 10px; margin-top: -24px; }
 .lb-next { top: 50%; right: 10px; margin-top: -24px; }
+.lightbox .lb-like { position: absolute; z-index: 1; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; opacity: 0.5; transition: opacity 200ms; animation: none; }
+.lightbox .lb-like:hover, .lightbox .lb-like:focus-visible, .lightbox .lb-like.liked { opacity: 0.9; }
+.lightbox .lb-like:not(.liked) .like-svg { stroke: #f3f0ea; }
+.lightbox .lb-like .like-svg { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6)); }
+.lb-like .like-count { display: none; }
 
 /* Keeps alt text for screen readers without flashing it while a photo loads */
 .photo-stage img, .lightbox img, .grid-cell img, .album-card img { color: transparent; }

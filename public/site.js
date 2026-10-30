@@ -26,22 +26,26 @@
 
   // Photo page: restore back-link href from saved value; Escape follows back-link
   var backLink = document.querySelector('.back-link');
-  if (backLink) {
+
+  function restoreBackLink() {
     var saved = safeGetStorage('list-return');
-    if (saved) {
-      try {
-        var parsed = JSON.parse(saved);
-        if (parsed && parsed.url) {
-          backLink.setAttribute('href', parsed.url);
-        }
-      } catch (e) { /* malformed, leave href alone */ }
-    }
+    if (!saved) return;
+    try {
+      var parsed = JSON.parse(saved);
+      if (parsed && parsed.url) {
+        document.querySelector('.back-link').setAttribute('href', parsed.url);
+      }
+    } catch (e) { /* malformed, leave href alone */ }
+  }
+
+  if (backLink) {
+    restoreBackLink();
 
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || lightboxOpen()) return;
       var tag = (e.target && e.target.tagName) || '';
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
-      window.location.href = backLink.getAttribute('href');
+      window.location.href = document.querySelector('.back-link').getAttribute('href');
     });
   }
 
@@ -101,13 +105,12 @@
   });
 
   // --- Keyboard navigation (arrow keys) ---
-  var prevLink = document.querySelector('.photo-nav-btn.prev-btn') || document.querySelector('.touch-nav-btn[aria-label="Previous photo"]');
-  var nextLink = document.querySelector('.photo-nav-btn.next-btn') || document.querySelector('.touch-nav-btn[aria-label="Next photo"]');
-
-  if (prevLink || nextLink) {
+  if (backLink) {
     document.addEventListener('keydown', function (e) {
       var tag = (e.target && e.target.tagName) || '';
       if (lightboxOpen() || tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+      var prevLink = document.querySelector('.photo-nav-btn.prev-btn') || document.querySelector('.touch-nav-btn[aria-label="Previous photo"]');
+      var nextLink = document.querySelector('.photo-nav-btn.next-btn') || document.querySelector('.touch-nav-btn[aria-label="Next photo"]');
       if (e.key === 'ArrowLeft' && prevLink) {
         e.preventDefault();
         window.location.href = prevLink.getAttribute('href');
@@ -122,96 +125,104 @@
   var turnstileLoaded = false;
   var widgetId = null;
 
+  function renderTurnstile(container) {
+    var sitekey = container.closest('[data-action="comment"]').getAttribute('data-sitekey');
+    if (sitekey) {
+      widgetId = window.turnstile.render('#turnstile-container', { sitekey: sitekey });
+    }
+  }
+
   function loadTurnstile(container) {
+    if (window.turnstile) {
+      renderTurnstile(container);
+      return;
+    }
     if (turnstileLoaded) return;
     turnstileLoaded = true;
 
     var script = document.createElement('script');
     script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
     script.onload = function () {
-      window.onloadTurnstileCallback = function () {
-        if (window.turnstile) {
-          var sitekey = container.closest('[data-action="comment"]').getAttribute('data-sitekey');
-          if (sitekey) {
-            widgetId = window.turnstile.render('#turnstile-container', { sitekey: sitekey });
-          }
-        }
-      };
-      window.onloadTurnstileCallback();
+      if (window.turnstile) renderTurnstile(document.getElementById('turnstile-container'));
     };
     document.head.appendChild(script);
   }
 
-  var commentSection = document.querySelector('[data-action="comment"]');
-  if (commentSection) {
-    var form = commentSection.querySelector('form');
-    var turnstileContainer = document.getElementById('turnstile-container');
-    var focusedOnce = false;
+  function setupComments() {
+    var commentSection = document.querySelector('[data-action="comment"]');
+    if (window.turnstile && widgetId !== null) window.turnstile.remove(widgetId);
+    widgetId = null;
+    if (commentSection) {
+      var form = commentSection.querySelector('form');
+      var turnstileContainer = document.getElementById('turnstile-container');
+      var focusedOnce = false;
 
-    function onFocusIn() {
-      if (focusedOnce) return;
-      focusedOnce = true;
-      if (turnstileContainer) loadTurnstile(turnstileContainer);
+      function onFocusIn() {
+        if (focusedOnce) return;
+        focusedOnce = true;
+        if (turnstileContainer) loadTurnstile(turnstileContainer);
+      }
+
+      form.addEventListener('focusin', onFocusIn);
     }
 
-    form.addEventListener('focusin', onFocusIn);
-  }
+    // --- Comment form ---
+    if (commentSection) {
+      var cform = commentSection.querySelector('form');
+      var msgEl = commentSection.querySelector('.form-msg');
+      var photoId = commentSection.getAttribute('data-photo-id');
 
-  // --- Comment form ---
-  if (commentSection) {
-    var cform = commentSection.querySelector('form');
-    var msgEl = commentSection.querySelector('.form-msg');
-    var photoId = commentSection.getAttribute('data-photo-id');
+      cform.addEventListener('submit', function (e) {
+        e.preventDefault();
 
-    cform.addEventListener('submit', function (e) {
-      e.preventDefault();
+        var formData = new FormData(cform);
+        var payload = {
+          author: formData.get('author'),
+          body: formData.get('body'),
+          website: formData.get('website'),
+          token: '',
+        };
 
-      var formData = new FormData(cform);
-      var payload = {
-        author: formData.get('author'),
-        body: formData.get('body'),
-        website: formData.get('website'),
-        token: '',
-      };
+        if (window.turnstile && widgetId !== null) {
+          payload.token = window.turnstile.getResponse(widgetId) || '';
+        }
+        if (!payload.token) {
+          msgEl.textContent = 'One moment, the spam check is still running. Try again in a few seconds.';
+          return;
+        }
 
-      if (window.turnstile && widgetId !== null) {
-        payload.token = window.turnstile.getResponse(widgetId) || '';
-      }
-      if (!payload.token) {
-        msgEl.textContent = 'One moment, the spam check is still running. Try again in a few seconds.';
-        return;
-      }
+        msgEl.textContent = 'Submitting\u2026';
 
-      msgEl.textContent = 'Submitting\u2026';
-
-      fetch('/api/photos/' + photoId + '/comments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-        .then(function (res) {
-          if (!res.ok) return res.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.error || 'error'); });
-          return res.json();
+        fetch('/api/photos/' + photoId + '/comments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
         })
-        .then(function () {
-          msgEl.textContent = 'Thanks, your comment will appear after review.';
-          cform.querySelector('[name="author"]').value = '';
-          cform.querySelector('[name="body"]').value = '';
-        })
-        .catch(function (err) {
-          var messages = {
-            links: 'Links are not allowed in comments.',
-            author: 'Please add a name, 40 characters at most.',
-            body: 'Please write a comment, 1000 characters at most.',
-            'rate limited': 'Too many comments for now. Please try again later.',
-            'queue full': 'Comments are paused for a moment. Please try again later.',
-            'turnstile failed': 'The spam check failed. Please try again.',
-          };
-          msgEl.textContent = messages[err.message] || 'Something went wrong.';
-          if (window.turnstile && widgetId !== null) window.turnstile.reset(widgetId);
-        });
-    });
+          .then(function (res) {
+            if (!res.ok) return res.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.error || 'error'); });
+            return res.json();
+          })
+          .then(function () {
+            msgEl.textContent = 'Thanks, your comment will appear after review.';
+            cform.querySelector('[name="author"]').value = '';
+            cform.querySelector('[name="body"]').value = '';
+          })
+          .catch(function (err) {
+            var messages = {
+              links: 'Links are not allowed in comments.',
+              author: 'Please add a name, 40 characters at most.',
+              body: 'Please write a comment, 1000 characters at most.',
+              'rate limited': 'Too many comments for now. Please try again later.',
+              'queue full': 'Comments are paused for a moment. Please try again later.',
+              'turnstile failed': 'The spam check failed. Please try again.',
+            };
+            msgEl.textContent = messages[err.message] || 'Something went wrong.';
+            if (window.turnstile && widgetId !== null) window.turnstile.reset(widgetId);
+          });
+      });
+    }
   }
+  setupComments();
 
   // --- Swipe between photos ---
   var swipeStage = document.querySelector('.photo-stage');
@@ -247,7 +258,9 @@
       var next = doc.querySelector('.next-btn');
       return {
         url: url,
+        doc: doc,
         picture: doc.querySelector('.photo-stage picture'),
+        like: doc.querySelector('.photo-actions .like-btn'),
         prev: prev && prev.getAttribute('href'),
         next: next && next.getAttribute('href'),
       };
@@ -262,6 +275,15 @@
       else box.prepend(picture);
       box.querySelector('.lb-prev').hidden = !shown.prev;
       box.querySelector('.lb-next').hidden = !shown.next;
+
+      var oldLike = box.querySelector('.lb-like');
+      if (oldLike) oldLike.remove();
+      if (shown.like) {
+        var like = shown.like.cloneNode(true);
+        like.classList.add('lb-like');
+        like.setAttribute('aria-label', 'Like this photo');
+        box.append(like);
+      }
     }
 
     function step(direction) {
@@ -274,20 +296,56 @@
           return res.text();
         })
         .then(function (html) {
+          stepping = false;
+          if (!box) return;
           shown = readPage(new DOMParser().parseFromString(html, 'text/html'), href);
           render();
           history.replaceState(null, '', href);
-          stepping = false;
         })
-        .catch(function () { window.location.href = href; });
+        .catch(function () {
+          stepping = false;
+          if (box) window.location.href = href;
+        });
+    }
+
+    // Puts the photo you stopped on into the page behind the viewer, so closing needs no reload
+    function swapPage(doc) {
+      var page = document.querySelector('.photo-page');
+      var fresh = doc.querySelector('.photo-page');
+      var freshStage = fresh.querySelector('.photo-stage');
+      var pastStage = false;
+
+      swipeStage.replaceChildren.apply(swipeStage, Array.from(freshStage.childNodes));
+      Array.from(page.children).forEach(function (el) {
+        if (el !== swipeStage) el.remove();
+      });
+      Array.from(fresh.children).forEach(function (el) {
+        if (el === freshStage) pastStage = true;
+        else if (pastStage) page.append(el);
+        else swipeStage.before(el);
+      });
+
+      document.title = doc.title;
+      restoreBackLink();
+      setupComments();
+      prepareStageImage();
     }
 
     function closeBox() {
+      var like = box.querySelector('.lb-like');
+      if (location.href !== openedAt) swapPage(shown.doc);
+
+      var pageLike = document.querySelector('.photo-actions .like-btn');
+      if (like && pageLike) {
+        pageLike.classList.toggle('liked', like.classList.contains('liked'));
+        pageLike.setAttribute('aria-pressed', like.getAttribute('aria-pressed'));
+        pageLike.querySelector('.like-count').textContent = like.querySelector('.like-count').textContent;
+      }
+
       box.remove();
       box = null;
       document.body.classList.remove('lightbox-open');
-      if (location.href !== openedAt) location.reload();
-      else swipeStage.querySelector('img').focus({ preventScroll: true });
+      swipeStage.querySelector('img').focus({ preventScroll: true });
     }
 
     function button(cls, label, text, onClick) {
@@ -317,7 +375,9 @@
         button('lb-prev', 'Previous photo', '\u2039', function () { step(-1); }),
         button('lb-next', 'Next photo', '\u203a', function () { step(1); })
       );
-      box.addEventListener('click', closeBox);
+      box.addEventListener('click', function (e) {
+        if (!e.target.closest('.lb-like')) closeBox();
+      });
 
       var boxX = 0, boxY = 0, boxTracking = false;
       box.addEventListener('touchstart', function (e) {
@@ -347,13 +407,19 @@
       box.querySelector('.lb-close').focus({ preventScroll: true });
     }
 
-    var stageImg = swipeStage.querySelector('img');
-    stageImg.tabIndex = 0;
-    stageImg.setAttribute('role', 'button');
-    stageImg.setAttribute('aria-label', 'Open full screen: ' + stageImg.alt);
-    stageImg.addEventListener('click', openBox);
-    stageImg.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') {
+    function prepareStageImage() {
+      var stageImg = swipeStage.querySelector('img');
+      stageImg.tabIndex = 0;
+      stageImg.setAttribute('role', 'button');
+      stageImg.setAttribute('aria-label', 'Open full screen: ' + stageImg.alt);
+    }
+    prepareStageImage();
+
+    swipeStage.addEventListener('click', function (e) {
+      if (e.target.tagName === 'IMG') openBox();
+    });
+    swipeStage.addEventListener('keydown', function (e) {
+      if (e.target.tagName === 'IMG' && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
         openBox();
       }

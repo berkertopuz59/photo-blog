@@ -95,7 +95,16 @@ ${queuePanel}
 </body></html>`;
 }
 
-export function photosView(photos, albums, filters, pendingCount = 0) {
+// Only with a watermark in place, since the setting means nothing without one
+function watermarkSwitch(watermark) {
+  if (!watermark) return '';
+  return `<div class="ai-panel">
+  <label class="ai-switch"><span class="switch"><input type="checkbox" data-setting="watermark_exif"${watermark.showExif ? ' checked' : ''}><span></span></span> Camera settings under the watermark</label>
+  <span class="ai-calls">Changing this rebuilds your photos one at a time</span>
+</div>`;
+}
+
+export function photosView(photos, albums, filters, pendingCount = 0, watermark = null) {
   const albumOpts = albums.map(a =>
     `<option value="${a.id}"${filters.albumId == a.id ? ' selected' : ''}>${escapeHtml(a.title)}</option>`
   ).join('');
@@ -115,6 +124,7 @@ export function photosView(photos, albums, filters, pendingCount = 0) {
 ${nav(pendingCount)}
 <main class="admin-main">
 <h1>Photos</h1>
+${watermarkSwitch(watermark)}
 <div class="filters">
   <label><input type="checkbox" id="select-all"> Select all</label>
   <label><input type="checkbox" id="filter-unpub" ${filters.unpublished ? 'checked' : ''}> Unpublished only</label>

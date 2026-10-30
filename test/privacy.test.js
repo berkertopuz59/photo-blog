@@ -80,6 +80,12 @@ describe('scan replies', () => {
     assert.equal(parseScanReply('no idea'), null);
   });
 
+  it('reads the other shapes the model answers in', () => {
+    const boxes = parseScanReply('```json\n[\n\t{"bbox_2d": [0, 31, 17, 62], "type": "face"},\n\t{"bbox_2d": [5, 955, 180, 989], "type": "plate"}\n]\n```');
+    assert.deepEqual(boxes.map((b) => b.type), ['face', 'plate']);
+    assert.deepEqual(parseScanReply('```json\n[]\n```'), []);
+  });
+
   it('drops invalid boxes and keeps others inside the image', () => {
     const out = cleanBoxes([{ x1: 0.5, y1: 0.5, x2: 0.2, y2: 0.9 }, { x1: 'x' }, null, { type: 'evil', x1: -1, y1: 0, x2: 2, y2: 0.5 }]);
     assert.deepEqual(out, [{ type: 'manual', x1: 0, y1: 0, x2: 1, y2: 0.5, blur: true }]);
@@ -241,6 +247,42 @@ describe('AI switches', () => {
     stop();
     const row = db.prepare('SELECT privacy_ok, privacy_scan, privacy_attempts FROM photos').get();
     assert.deepEqual({ ...row }, { privacy_ok: 0, privacy_scan: 'new', privacy_attempts: 1 });
+  });
+
+  it('one bad answer does not hold up the rest of the queue', async () => {
+    const { db, dataDir } = setup();
+    setSetting(db, 'ai_privacy', '1');
+    const good = await ingest(db, dataDir, CHECKER, 'a.jpg');
+    const bad = await ingest(db, dataDir, Buffer.concat([CHECKER, Buffer.from([0])]), 'b.jpg');
+    await processPhoto(db, dataDir, good.id);
+    await processPhoto(db, dataDir, bad.id);
+    let calls = 0;
+    const fetchFn = async () => { calls += 1; return reply(calls === 1 ? 'no idea' : '{"items":[]}')(); };
+    const stop = startWorker(db, dataDir, { intervalMs: 20, config: api, fetchFn });
+    await until(() => db.prepare("SELECT COUNT(*) AS n FROM photos WHERE privacy_scan = 'done'").get().n === 2);
+    stop();
+  });
+
+  it('treats a cut-off reply as failed, so it cannot look like a finished scan', async () => {
+    const { db, dataDir } = setup();
+    const { id } = await ingest(db, dataDir, CHECKER, 'a.jpg');
+    const fetchFn = async () => ({ ok: true, json: async () => ({ choices: [{ finish_reason: 'length', message: { content: '{"items":[{"type":"face","box":[1,2,30,40]},' } }] }) });
+    await assert.rejects(scanPhoto(db, dataDir, api, id, fetchFn), (err) => err.badAnswer);
+    assert.equal(db.prepare('SELECT privacy_scan FROM photos').get().privacy_scan, 'new');
+  });
+
+  it('never scans a photo you approved, even when your blur re-encodes it', async () => {
+    const { db, dataDir } = setup();
+    setSetting(db, 'ai_privacy', '1');
+    const { id } = await ingest(db, dataDir, CHECKER, 'a.jpg');
+    await processPhoto(db, dataDir, id);
+    reviewPhoto(db, id, [{ type: 'manual', x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.25 }]);
+    let calls = 0;
+    const stop = startWorker(db, dataDir, { intervalMs: 20, config: api, fetchFn: async () => { calls += 1; return reply('{"items":[]}')(); } });
+    await until(() => db.prepare('SELECT status FROM photos').get().status === 'ready');
+    await new Promise((r) => setTimeout(r, 100));
+    stop();
+    assert.equal(calls, 0);
   });
 
   it('marks a photo for hand review after three failed scans', async () => {

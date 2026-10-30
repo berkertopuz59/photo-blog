@@ -8,6 +8,7 @@ import { nowIso } from '../lib/db.js';
 import { captionDrafts, approvedCaptions, cleanLabels } from '../lib/captions.js';
 import { privacyList, reviewPhoto } from '../lib/privacy.js';
 import { previewPath } from '../lib/images.js';
+import { loadWatermark } from '../lib/watermark.js';
 import { SETTING_KEYS, aiCalls, aiConfigured, getSetting, setSetting } from '../lib/settings.js';
 import { logEvent, queueStats, libraryStats, trafficStats, recentEvents } from '../lib/stats.js';
 import { rmSync } from 'node:fs';
@@ -199,7 +200,8 @@ export function adminRoutes({ db, config, dataDir }) {
     sql += ' ORDER BY p.created_at DESC';
     const photos = db.prepare(sql).all(...params);
     const albums = db.prepare('SELECT id, title FROM albums ORDER BY title').all();
-    return c.html(photosView(photos, albums, { albumId, unpublished }, pendingCount()));
+    const watermark = await loadWatermark(db, dataDir);
+    return c.html(photosView(photos, albums, { albumId, unpublished }, pendingCount(), watermark));
   });
 
   app.get('/albums', async (c) => {
