@@ -5,11 +5,16 @@ import { clientIp, visitorHash, rateLimit } from '../lib/guard.js';
 import { ingest } from '../lib/images.js';
 import { slugify } from '../lib/slug.js';
 import { nowIso } from '../lib/db.js';
+import { captionDrafts, approvedCaptions, cleanLabels } from '../lib/captions.js';
+import { privacyList, reviewPhoto } from '../lib/privacy.js';
+import { previewPath } from '../lib/images.js';
+import { SETTING_KEYS, aiCalls, aiConfigured, getSetting, setSetting } from '../lib/settings.js';
+import { logEvent, queueStats, libraryStats, trafficStats, recentEvents } from '../lib/stats.js';
 import { rmSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir, stat, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getConnInfo } from '@hono/node-server/conninfo';
-import { adminView, loginView, photosView, albumsView, commentsView, IMG_ID_RE, IMG_FILE_RE } from '../views/admin.js';
+import { adminView, loginView, photosView, albumsView, commentsView, statsView, captionsView, privacyView, IMG_ID_RE, IMG_FILE_RE } from '../views/admin.js';
 import { escapeHtml } from '../views/html.js';
 
 const PHOTO_ID_RE = /^[a-f0-9]{16}$/;
@@ -23,8 +28,18 @@ function deletePhotoHelper(db, dataDir, id) {
     try { rmSync(join(dataDir, 'originals', `${id}.${ext}`), { force: true }); } catch {}
   }
   rmSync(join(dataDir, 'derived', id), { recursive: true, force: true });
+  rmSync(join(dataDir, 'previews', `${id}.jpg`), { force: true });
   db.prepare('UPDATE albums SET cover_photo_id = NULL WHERE cover_photo_id = ?').run(id);
   db.prepare('DELETE FROM photos WHERE id = ?').run(id);
+}
+
+async function folderBytes(dir) {
+  const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
+  let bytes = 0;
+  for (const entry of entries) {
+    if (entry.isFile()) bytes += (await stat(join(entry.parentPath, entry.name))).size;
+  }
+  return bytes;
 }
 
 function validateAlbumId(value) {
@@ -47,6 +62,20 @@ export function adminRoutes({ db, config, dataDir }) {
   }
 
   const pendingCount = () => db.prepare("SELECT COUNT(*) AS n FROM comments WHERE status = 'pending'").get().n;
+  let storageCache = { at: 0, value: null };
+
+  async function storageStats() {
+    if (Date.now() - storageCache.at < 60 * 1000) return storageCache.value;
+    const disk = await statfs(dataDir);
+    const value = {
+      originals: await folderBytes(join(dataDir, 'originals')),
+      derived: await folderBytes(join(dataDir, 'derived')),
+      free: disk.bavail * disk.bsize,
+    };
+    storageCache = { at: Date.now(), value };
+    return value;
+  }
+
   const publishAlbumOf = db.prepare('UPDATE albums SET is_published = 1 WHERE id = (SELECT album_id FROM photos WHERE id = ? AND is_published = 1)');
 
   // Global: security headers + no-store + noindex for all admin HTML
@@ -78,6 +107,11 @@ export function adminRoutes({ db, config, dataDir }) {
     const token = match ? match[1] : null;
     if (token && verifySession(config.sessionSecret, token)) {
       await next();
+      // Marks this browser so your own visits stay out of the stats
+      if (!/(?:^|;\s*)owner=1/.test(cookie)) {
+        const secure = config.isProd ? '; Secure' : '';
+        c.header('Set-Cookie', `owner=1; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${365 * 24 * 60 * 60}`, { append: true });
+      }
       return;
     }
     if (!rateLimit(db, 'admin-anon', visitorKey(c), 60, 60 * 1000)) {
@@ -115,6 +149,7 @@ export function adminRoutes({ db, config, dataDir }) {
       && rateLimit(db, 'login-day', key, 20, 24 * 60 * 60 * 1000)
       && rateLimit(db, 'login-all', 'all', 30, 15 * 60 * 1000);
     if (!allowed) {
+      logEvent(db, 'login_blocked', 'Too many attempts');
       c.header('Retry-After', '900');
       return c.html(loginView('Too many attempts. Try again later.'), 429);
     }
@@ -129,6 +164,7 @@ export function adminRoutes({ db, config, dataDir }) {
 
     // Verify
     if (!verifyLogin(username, pw, config)) {
+      logEvent(db, 'login_failed', 'Wrong username or password');
       return c.html(loginView('Invalid login.'), 401);
     }
 
@@ -167,7 +203,11 @@ export function adminRoutes({ db, config, dataDir }) {
   });
 
   app.get('/albums', async (c) => {
-    const albums = db.prepare('SELECT a.*, (SELECT COUNT(*) FROM photos WHERE album_id = a.id) AS photo_count FROM albums a ORDER BY a.position, a.id').all();
+    const albums = db.prepare(`SELECT a.*, (SELECT COUNT(*) FROM photos WHERE album_id = a.id) AS photo_count,
+      (SELECT COUNT(*) FROM photos WHERE album_id = a.id AND is_published = 1 AND privacy_ok = 1) AS live_count,
+      (SELECT COUNT(*) FROM photos WHERE album_id = a.id AND is_published = 1 AND privacy_ok = 0) AS waiting_count,
+      (SELECT COUNT(*) FROM photos WHERE album_id = a.id AND is_published = 0 AND status = 'ready') AS unpublished_count
+      FROM albums a ORDER BY a.position, a.id`).all();
     return c.html(albumsView(albums, pendingCount()));
   });
 
@@ -179,6 +219,48 @@ export function adminRoutes({ db, config, dataDir }) {
       `SELECT c.*, p.id AS pid FROM comments c LEFT JOIN photos p ON c.photo_id = p.id WHERE c.status != 'pending' ORDER BY c.created_at DESC LIMIT 100`
     ).all();
     return c.html(commentsView(pending, all));
+  });
+
+  function aiPanel(key, lane) {
+    return { key, configured: aiConfigured(config), enabled: getSetting(db, key) === '1', calls: aiCalls(db, lane) };
+  }
+
+  app.get('/privacy', (c) => {
+    const reviewed = c.req.query('view') === 'reviewed';
+    return c.html(privacyView(privacyList(db, { reviewed }), { ai: aiPanel('ai_privacy', 'privacy'), reviewed }, pendingCount()));
+  });
+
+  // The unblurred review copy, for the admin only
+  app.get('/preview/:id', async (c) => {
+    const id = c.req.param('id');
+    if (!PHOTO_ID_RE.test(id)) return c.text('Not found', 404);
+    for (const path of [previewPath(dataDir, id), join(dataDir, 'derived', id, '960.jpg')]) {
+      const data = await readFile(path).catch(() => null);
+      if (data) {
+        c.header('Content-Type', 'image/jpeg');
+        c.header('Cache-Control', 'private, no-store');
+        return c.body(data);
+      }
+    }
+    return c.text('Not found', 404);
+  });
+
+  app.get('/captions', (c) => {
+    const approved = c.req.query('view') === 'approved';
+    return c.html(captionsView(approved ? approvedCaptions(db) : captionDrafts(db), {
+      ai: aiPanel('ai_captions', 'captions'),
+      approved,
+    }, pendingCount()));
+  });
+
+  app.get('/stats', async (c) => {
+    const html = statsView({
+      library: libraryStats(db),
+      traffic: trafficStats(db),
+      events: recentEvents(db),
+      storage: await storageStats(),
+    }, pendingCount());
+    return c.html(html);
   });
 
   // --- Serve images (admin, any status) ---
@@ -225,10 +307,64 @@ export function adminRoutes({ db, config, dataDir }) {
       return c.json(result, 201);
     } catch (err) {
       if (err.code === 'UNSUPPORTED') {
+        logEvent(db, 'upload_failed', 'Unsupported file format');
         return c.json({ error: 'unsupported' }, 415);
       }
+      logEvent(db, 'upload_failed', err.message);
       return c.json({ error: err.message }, 500);
     }
+  });
+
+  app.get('/api/queue', (c) => c.json(queueStats(db)));
+
+  app.post('/api/settings', async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!SETTING_KEYS.includes(body?.key) || typeof body.value !== 'boolean') return c.json({ error: 'invalid' }, 400);
+    setSetting(db, body.key, body.value ? '1' : '0');
+    return c.json({ ok: true });
+  });
+
+  app.post('/api/privacy/:id', async (c) => {
+    const id = c.req.param('id');
+    if (!PHOTO_ID_RE.test(id)) return c.json({ error: 'not_found' }, 404);
+    const body = await c.req.json().catch(() => null);
+    if (body?.action === 'rescan') {
+      db.prepare("UPDATE photos SET privacy_scan = 'new', privacy_attempts = 0, privacy_reviewed = 0 WHERE id = ?").run(id);
+      return c.json({ ok: true });
+    }
+    if (body?.action !== 'approve') return c.json({ error: 'invalid_action' }, 400);
+    return reviewPhoto(db, id, body.boxes) ? c.json({ ok: true }) : c.json({ error: 'not_found' }, 404);
+  });
+
+  // Caption drafts: nothing is public until approved here
+  app.post('/api/captions/:id', async (c) => {
+    const id = c.req.param('id');
+    if (!PHOTO_ID_RE.test(id)) return c.json({ error: 'not_found' }, 404);
+    const body = await c.req.json().catch(() => null);
+    const action = body?.action;
+
+    if (action === 'approve') {
+      const caption = String(body.caption || '').trim().slice(0, 5000);
+      if (!caption) return c.json({ error: 'empty' }, 400);
+      const current = db.prepare('SELECT draft_meta, meta FROM photos WHERE id = ?').get(id);
+      const drafted = JSON.parse(current?.draft_meta || current?.meta || '{}');
+      const meta = {
+        description: String(body.description || '').trim().slice(0, 300),
+        tags: cleanLabels(body.tags, 12),
+        moods: cleanLabels(body.moods, 6),
+        details: cleanLabels(body.details, 8),
+        colors: drafted.colors || [],
+        palette: drafted.palette || [],
+      };
+      db.prepare('UPDATE photos SET caption = ?, meta = ?, caption_draft = NULL, draft_meta = NULL WHERE id = ?').run(caption, JSON.stringify(meta), id);
+    } else if (action === 'dismiss') {
+      db.prepare('UPDATE photos SET caption_draft = NULL, draft_meta = NULL, caption_dismissed = 1 WHERE id = ?').run(id);
+    } else if (action === 'regenerate') {
+      db.prepare('UPDATE photos SET caption_draft = NULL, draft_meta = NULL, caption_attempts = 0, caption_dismissed = 0 WHERE id = ?').run(id);
+    } else {
+      return c.json({ error: 'invalid_action' }, 400);
+    }
+    return c.json({ ok: true });
   });
 
   // Status polling
@@ -361,6 +497,17 @@ export function adminRoutes({ db, config, dataDir }) {
     vals.push(id);
     db.prepare(`UPDATE albums SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
     return c.json({ ok: true });
+  });
+
+  app.post('/api/albums/:id/publish', (c) => {
+    const id = Number(c.req.param('id'));
+    if (!db.prepare('SELECT 1 FROM albums WHERE id = ?').get(id)) return c.json({ error: 'not_found' }, 404);
+    const { changes } = db.prepare(`
+      UPDATE photos SET is_published = 1, published_at = COALESCE(published_at, ?)
+      WHERE album_id = ? AND status = 'ready' AND is_published = 0
+    `).run(nowIso(), id);
+    db.prepare('UPDATE albums SET is_published = 1 WHERE id = ?').run(id);
+    return c.json({ ok: true, changed: changes });
   });
 
   app.delete('/api/albums/:id', async (c) => {

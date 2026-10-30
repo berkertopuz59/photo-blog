@@ -1,3 +1,4 @@
+import { assets } from '../lib/assets.js';
 import { escapeHtml } from './html.js';
 import { derivedWidths } from '../lib/images.js';
 
@@ -12,40 +13,49 @@ function formatDate(iso) {
   return new Date(`${day[0]}T00:00:00Z`).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
 }
 
+function photoMeta(photo) {
+  try {
+    return JSON.parse(photo.meta) || {};
+  } catch {
+    return {};
+  }
+}
+
 function pictureTag(photo, { isMain = false, sizes } = {}) {
   const widths = derivedWidths(photo.width || 960);
   const aspect = photo.width && photo.height ? (photo.width / photo.height) : 1.5;
-  const alt = escapeHtml(photo.caption || 'Photo');
+  const alt = escapeHtml(photoMeta(photo).description || photo.caption || 'Photo');
   const loading = isMain ? '' : ' loading="lazy"';
   const sizesAttr = sizes || (isMain ? MAIN_SIZES : GRID_SIZES);
   const placeholder = photo.placeholder
     ? ` style="background-image:url('${escapeHtml(photo.placeholder)}');background-size:cover;background-position:center;"`
     : '';
 
+  const version = photo.image_version ? `?v=${photo.image_version}` : '';
   const avifSrcset = widths.map((w) => {
-    return `/img/${photo.id}/${w}.avif ${w}w`;
+    return `/img/${photo.id}/${w}.avif${version} ${w}w`;
   }).join(', ');
 
   const webpSrcset = widths.map((w) => {
-    return `/img/${photo.id}/${w}.webp ${w}w`;
+    return `/img/${photo.id}/${w}.webp${version} ${w}w`;
   }).join(', ');
 
   const jpgSrcset = widths.map((w) => {
-    return `/img/${photo.id}/${w}.jpg ${w}w`;
+    return `/img/${photo.id}/${w}.jpg${version} ${w}w`;
   }).join(', ');
 
   const fallbackW = widths[0];
   const fallbackH = Math.round(fallbackW / aspect);
 
-  return `<picture${placeholder}><source type="image/avif" srcset="${avifSrcset}" sizes="${sizesAttr}"><source type="image/webp" srcset="${webpSrcset}" sizes="${sizesAttr}"><img src="/img/${photo.id}/${fallbackW}.jpg" srcset="${jpgSrcset}" sizes="${sizesAttr}" width="${fallbackW}" height="${fallbackH}"${loading} decoding="async" alt="${alt}"></picture>`;
+  return `<picture${placeholder}>${photo.avif_ready === 1 ? `<source type="image/avif" srcset="${avifSrcset}" sizes="${sizesAttr}">` : ''}<source type="image/webp" srcset="${webpSrcset}" sizes="${sizesAttr}"><img src="/img/${photo.id}/${fallbackW}.jpg${version}" srcset="${jpgSrcset}" sizes="${sizesAttr}" width="${fallbackW}" height="${fallbackH}"${loading} decoding="async" alt="${alt}"></picture>`;
 }
 
-function photoCell(photo) {
+function photoCell(photo, query = '') {
   const count = photo.like_count || 0;
   const overlay = count > 0
     ? `<span class="cell-overlay"><svg class="heart-icon" width="18" height="18" viewBox="0 0 24 24" fill="#f4611e" stroke="none" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg><span class="cell-like-count">${count}</span></span>`
     : '';
-  return `<a href="/p/${photo.id}" class="grid-cell">${pictureTag(photo)}${overlay}</a>`;
+  return `<a href="/p/${photo.id}${query}" class="grid-cell">${pictureTag(photo)}${overlay}</a>`;
 }
 
 function albumCard(album, cardSizes) {
@@ -71,7 +81,7 @@ const blogLink = config.blogUrl ? `<a href="${escapeHtml(config.blogUrl)}">Blog<
 
 function header(opts = {}) {
   const titleAttr = opts.hideTitle ? '' : `<a class="site-title" href="/">${siteTitle}</a>`;
-  return `<header class="site-header">${titleAttr}<nav class="site-nav"><a href="/albums">Albums</a>${blogLink}</nav></header>`;
+  return `<header class="site-header">${titleAttr}<nav class="site-nav"><a href="/albums">Albums</a><a href="/explore">Explore</a>${blogLink}</nav></header>`;
 }
 
 function footer() {
@@ -80,7 +90,7 @@ function footer() {
 
 function shell(title, bodyContent, opts = {}) {
   const preloads = `<link rel="preload" href="/fonts/instrument-serif-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>`;
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} \u2014 ${siteTitle}</title>${preloads}<link rel="stylesheet" href="/site.css"></head><body>${header(opts)}<main>${bodyContent}</main>${footer()}<script src="/site.js" defer></script></body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='%23f4611e'/%3E%3C/svg%3E"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} \u2014 ${siteTitle}</title>${preloads}<link rel="stylesheet" href="${assets.siteCss}"></head><body>${header(opts)}<main>${bodyContent}</main>${footer()}<script src="${assets.siteJs}" defer></script></body></html>`;
 }
 
   return {
@@ -98,7 +108,7 @@ function shell(title, bodyContent, opts = {}) {
 
       let grid = '<div class="photo-grid">';
       if (photos.length) {
-        grid += photos.map(photoCell).join('');
+        grid += photos.map((p) => photoCell(p, '?from=latest')).join('');
       } else {
         grid += '<p class="empty">No photos yet.</p>';
       }
@@ -129,13 +139,21 @@ function shell(title, bodyContent, opts = {}) {
       return shell('Albums', content);
     },
 
+    explore({ moods, details, colors, tags }) {
+      const group = (title, rows) => rows.length
+        ? `<h2 class="explore-heading">${title}</h2><p class="photo-labels">${rows.map((r) => `<a href="/tag/${encodeURIComponent(r.value)}">${escapeHtml(r.value)} <span>${r.n}</span></a>`).join('')}</p>`
+        : '';
+      const body = group('Moods', moods) + group('Light and scene', details) + group('Colors', colors) + group('Subjects', tags);
+      return shell('Explore', `<h1 class="page-title">Explore</h1><div class="explore">${body || '<p class="empty">Nothing here yet.</p>'}</div>`);
+    },
+
     albumDetail({ album, photos, photoCount }) {
       let content = `<h1 class="page-title">${escapeHtml(album.title)}</h1>`;
       if (album.description) content += `<p class="album-desc">${escapeHtml(album.description)}</p>`;
       if (photoCount != null) content += `<p class="album-count">${photoCount} photo${photoCount !== 1 ? 's' : ''}</p>`;
       content += '<div class="photo-grid">';
       if (photos.length) {
-        content += photos.map(photoCell).join('');
+        content += photos.map((p) => photoCell(p)).join('');
       } else {
         content += '<p class="empty">No photos in this album.</p>';
       }
@@ -143,7 +161,7 @@ function shell(title, bodyContent, opts = {}) {
       return shell(album.title, content);
     },
 
-    photoDetail({ photo, album, liked, likeCount, comments, prev, next, turnstileSiteKey }) {
+    photoDetail({ photo, album, liked, likeCount, comments, prev, next, navQuery = '', turnstileSiteKey }) {
       const takenAt = photo.taken_at ? formatDate(photo.taken_at) : null;
 
       // EXIF definition list
@@ -168,20 +186,28 @@ function shell(title, bodyContent, opts = {}) {
       if (takenAt) parts.push(escapeHtml(takenAt));
       if (parts.length) metaLine = `<p class="photo-meta">${parts.join(' \u00B7 ')}</p>`;
 
-      const caption = photo.caption ? `<p class="photo-caption">${escapeHtml(photo.caption)}</p>` : '';
+      const meta = photoMeta(photo);
+      const labels = [...(meta.tags || []), ...(meta.moods || []), ...(meta.details || []), ...(meta.colors || [])];
+      const palette = (meta.palette || []).filter((hex) => /^#[0-9a-f]{6}$/.test(hex));
+      const caption = [
+        photo.caption ? `<p class="photo-caption">${escapeHtml(photo.caption)}</p>` : '',
+        meta.description ? `<p class="photo-description">${escapeHtml(meta.description)}</p>` : '',
+        palette.length ? `<p class="photo-palette">${palette.map((hex) => `<span style="background:${hex}" title="${hex}"></span>`).join('')}</p>` : '',
+        labels.length ? `<p class="photo-labels">${labels.map((l) => `<a href="/tag/${encodeURIComponent(l)}">${escapeHtml(l)}</a>`).join('')}</p>` : '',
+      ].join('');
 
       // Like button
       const likedClass = liked ? ' liked' : '';
       const likeBtn = `<button class="like-btn${likedClass}" data-action="like" data-photo-id="${escapeHtml(photo.id)}" type="button" aria-pressed="${liked ? 'true' : 'false'}"><svg class="like-svg" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg> <span class="like-count">${likeCount}</span></button>`;
-      const fullSize = `<a class="full-size" href="/img/${escapeHtml(photo.id)}/${derivedWidths(photo.width || 960).at(-1)}.jpg" target="_blank" rel="noopener">Full size</a>`;
+      const fullSize = `<a class="full-size" href="/img/${escapeHtml(photo.id)}/${derivedWidths(photo.width || 960).at(-1)}.jpg${photo.image_version ? `?v=${photo.image_version}` : ''}" target="_blank" rel="noopener">Full size</a>`;
 
       // Prev/Next nav
       const chevronLeft = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>`;
       const chevronRight = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>`;
       let navHtml = '';
-      if (prev) navHtml += `<a href="/p/${escapeHtml(prev.id)}" class="photo-nav-btn prev-btn" aria-label="Previous photo">${chevronLeft}</a>`;
-      if (next) navHtml += `<a href="/p/${escapeHtml(next.id)}" class="photo-nav-btn next-btn" aria-label="Next photo">${chevronRight}</a>`;
-      const touchNav = `<div class="touch-nav">${prev ? `<a href="/p/${escapeHtml(prev.id)}" class="touch-nav-btn" aria-label="Previous photo">${chevronLeft}</a>` : ''}${next ? `<a href="/p/${escapeHtml(next.id)}" class="touch-nav-btn" aria-label="Next photo">${chevronRight}</a>` : ''}</div>`;
+      if (prev) navHtml += `<a href="/p/${escapeHtml(prev.id)}${navQuery}" class="photo-nav-btn prev-btn" aria-label="Previous photo">${chevronLeft}</a>`;
+      if (next) navHtml += `<a href="/p/${escapeHtml(next.id)}${navQuery}" class="photo-nav-btn next-btn" aria-label="Next photo">${chevronRight}</a>`;
+      const touchNav = `<div class="touch-nav">${prev ? `<a href="/p/${escapeHtml(prev.id)}${navQuery}" class="touch-nav-btn" aria-label="Previous photo">${chevronLeft}</a>` : ''}${next ? `<a href="/p/${escapeHtml(next.id)}${navQuery}" class="touch-nav-btn" aria-label="Next photo">${chevronRight}</a>` : ''}</div>`;
 
       // Back link
       const backHref = album ? `/a/${escapeHtml(album.slug)}` : '/';

@@ -2,11 +2,14 @@
 
 A small self-hosted photo site with albums. Upload from a private admin page and the site does the rest.
 
-- **Automatic optimizing:** AVIF, WebP and JPEG at up to five sizes, so every screen gets only what it needs
+- **Automatic optimizing:** WebP and JPEG at up to five sizes within seconds, then AVIF in the background, so every screen gets only what it needs
 - **EXIF on every photo:** camera, lens, settings, editor and crop percentage, read with exiftool
 - **Private by default:** GPS and all other metadata are removed from public images, and originals are never served
 - **Likes and comments without accounts:** comments stay hidden until you approve them
 - **Bot protection:** Cloudflare Turnstile, a honeypot, a no-links rule and rate limits
+- **Stats without tracking:** views per photo, countries, referrers and a 30-day failure log, with no IP addresses or analytics cookies
+- **AI drafts, optional:** any OpenAI-compatible vision model suggests a title, description, tags and moods, and nothing goes public until you approve it
+- **Privacy review:** an optional AI scan proposes face and license plate blurs, you adjust them, and new photos stay offline until approved
 - **Works on phones:** swipe between photos, and the admin works there too
 
 Built with Node 22, Hono, SQLite, sharp and exiftool. No build step and no frontend framework.

@@ -1,6 +1,10 @@
 (function () {
   'use strict';
 
+  function lightboxOpen() {
+    return document.body.classList.contains('lightbox-open');
+  }
+
   // --- List-return persistence ---
   function safeSetStorage(key, val) {
     try { sessionStorage.setItem(key, val); } catch (e) { /* blocked */ }
@@ -34,7 +38,7 @@
     }
 
     document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || lightboxOpen()) return;
       var tag = (e.target && e.target.tagName) || '';
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
       window.location.href = backLink.getAttribute('href');
@@ -103,7 +107,7 @@
   if (prevLink || nextLink) {
     document.addEventListener('keydown', function (e) {
       var tag = (e.target && e.target.tagName) || '';
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+      if (lightboxOpen() || tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
       if (e.key === 'ArrowLeft' && prevLink) {
         e.preventDefault();
         window.location.href = prevLink.getAttribute('href');
@@ -231,6 +235,138 @@
     }, { passive: true });
   }
 
+  // --- Full-screen view: tap to open, tap or Escape or swipe down to close, arrows and swipes move ---
+  if (swipeStage) {
+    var box = null;
+    var shown = null;
+    var openedAt = '';
+    var stepping = false;
+
+    function readPage(doc, url) {
+      var prev = doc.querySelector('.prev-btn');
+      var next = doc.querySelector('.next-btn');
+      return {
+        url: url,
+        picture: doc.querySelector('.photo-stage picture'),
+        prev: prev && prev.getAttribute('href'),
+        next: next && next.getAttribute('href'),
+      };
+    }
+
+    function render() {
+      var picture = shown.picture.cloneNode(true);
+      picture.removeAttribute('style');
+      picture.querySelectorAll('source, img').forEach(function (el) { el.setAttribute('sizes', '100vw'); });
+      var old = box.querySelector('picture');
+      if (old) old.replaceWith(picture);
+      else box.prepend(picture);
+      box.querySelector('.lb-prev').hidden = !shown.prev;
+      box.querySelector('.lb-next').hidden = !shown.next;
+    }
+
+    function step(direction) {
+      var href = direction < 0 ? shown.prev : shown.next;
+      if (!href || stepping) return;
+      stepping = true;
+      fetch(href)
+        .then(function (res) {
+          if (!res.ok) throw new Error('fail');
+          return res.text();
+        })
+        .then(function (html) {
+          shown = readPage(new DOMParser().parseFromString(html, 'text/html'), href);
+          render();
+          history.replaceState(null, '', href);
+          stepping = false;
+        })
+        .catch(function () { window.location.href = href; });
+    }
+
+    function closeBox() {
+      box.remove();
+      box = null;
+      document.body.classList.remove('lightbox-open');
+      if (location.href !== openedAt) location.reload();
+      else swipeStage.querySelector('img').focus({ preventScroll: true });
+    }
+
+    function button(cls, label, text, onClick) {
+      var el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'lb-btn ' + cls;
+      el.setAttribute('aria-label', label);
+      el.textContent = text;
+      el.addEventListener('click', function (e) {
+        e.stopPropagation();
+        onClick();
+      });
+      return el;
+    }
+
+    function openBox() {
+      if (box) return;
+      openedAt = location.href;
+      shown = readPage(document, location.href);
+      box = document.createElement('div');
+      box.className = 'lightbox';
+      box.setAttribute('role', 'dialog');
+      box.setAttribute('aria-modal', 'true');
+      box.setAttribute('aria-label', 'Full-screen photo');
+      box.append(
+        button('lb-close', 'Close', '\u00d7', closeBox),
+        button('lb-prev', 'Previous photo', '\u2039', function () { step(-1); }),
+        button('lb-next', 'Next photo', '\u203a', function () { step(1); })
+      );
+      box.addEventListener('click', closeBox);
+
+      var boxX = 0, boxY = 0, boxTracking = false;
+      box.addEventListener('touchstart', function (e) {
+        boxTracking = e.touches.length === 1 && !(window.visualViewport && window.visualViewport.scale > 1);
+        if (boxTracking) { boxX = e.touches[0].clientX; boxY = e.touches[0].clientY; }
+      }, { passive: true });
+      box.addEventListener('touchmove', function (e) {
+        if (e.touches.length > 1) boxTracking = false;
+      }, { passive: true });
+      box.addEventListener('touchend', function (e) {
+        if (!boxTracking) return;
+        boxTracking = false;
+        var dx = e.changedTouches[0].clientX - boxX;
+        var dy = e.changedTouches[0].clientY - boxY;
+        if (Math.abs(dx) >= 60 && Math.abs(dy) < Math.abs(dx) / 2) {
+          e.preventDefault();
+          step(dx < 0 ? 1 : -1);
+        } else if (dy >= 80 && Math.abs(dx) < dy / 2) {
+          e.preventDefault();
+          closeBox();
+        }
+      });
+
+      document.body.append(box);
+      document.body.classList.add('lightbox-open');
+      render();
+      box.querySelector('.lb-close').focus({ preventScroll: true });
+    }
+
+    var stageImg = swipeStage.querySelector('img');
+    stageImg.tabIndex = 0;
+    stageImg.setAttribute('role', 'button');
+    stageImg.setAttribute('aria-label', 'Open full screen: ' + stageImg.alt);
+    stageImg.addEventListener('click', openBox);
+    stageImg.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openBox();
+      }
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (!box) return;
+      if (e.key === 'Escape') closeBox();
+      else if (e.key === 'ArrowLeft') step(-1);
+      else if (e.key === 'ArrowRight') step(1);
+    });
+  }
+
   // --- Album cards flip through their photos on hover ---
   var canHover = window.matchMedia('(hover: hover)').matches;
   var calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -238,6 +374,7 @@
     document.querySelectorAll('.album-card[data-previews]').forEach(function (card) {
       var urls = card.getAttribute('data-previews').split(' ');
       var timer = null;
+      var delay = null;
       var step = 0;
 
       function show() {
@@ -247,10 +384,11 @@
         layer.src = urls[step % urls.length];
         step += 1;
         layer.onload = function () {
-          card.querySelector('picture').after(layer);
-          requestAnimationFrame(function () { layer.classList.add('is-visible'); });
+          if (!timer) return;
           var older = card.querySelectorAll('.album-preview');
-          for (var i = 0; i < older.length - 2; i++) older[i].remove();
+          (older.length ? older[older.length - 1] : card.querySelector('picture')).after(layer);
+          requestAnimationFrame(function () { layer.classList.add('is-visible'); });
+          for (var i = 0; i < older.length - 1; i++) older[i].remove();
         };
       }
 
@@ -258,16 +396,17 @@
         if (timer) return;
         urls.forEach(function (url) { new Image().src = url; });
         step = 0;
-        show();
-        timer = setInterval(show, 700);
+        timer = setInterval(show, 2200);
+        delay = setTimeout(show, 500);
       }
 
       function stop() {
         clearInterval(timer);
+        clearTimeout(delay);
         timer = null;
         card.querySelectorAll('.album-preview').forEach(function (layer) {
           layer.classList.remove('is-visible');
-          setTimeout(function () { layer.remove(); }, 200);
+          setTimeout(function () { layer.remove(); }, 900);
         });
       }
 

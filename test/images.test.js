@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { openDb } from '../lib/db.js';
-import { ingest, processPhoto, readExif, sniffExt, derivedWidths } from '../lib/images.js';
+import { ingest, processPhoto, encodeAvif, readExif, sniffExt, derivedWidths } from '../lib/images.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const fixturesDir = join(__dirname, 'fixtures');
@@ -266,6 +266,7 @@ test('300px wide image makes only one width and is not upscaled', async () => {
 
   const { id } = await ingest(db, dataDir, buf, 'small.jpg');
   await processPhoto(db, dataDir, id);
+  await encodeAvif(db, dataDir, id);
 
   const derivedDir = join(dataDir, 'derived', id);
   const files = readdirSync(derivedDir).sort();
@@ -283,6 +284,7 @@ test('all three formats exist for each width', async () => {
 
   const { id } = await ingest(db, dataDir, buf, 'large.jpg');
   await processPhoto(db, dataDir, id);
+  await encodeAvif(db, dataDir, id);
 
   const derivedDir = join(dataDir, 'derived', id);
   const widths = derivedWidths(2000);
@@ -421,4 +423,21 @@ test('HEIC fixture with EXIF/GPS: correct dimensions 800x1200, camera, shutter, 
     const meta = await sharp(fileBuf).metadata();
     assert.ok(!meta.exif || meta.exif.length === 0, `${file} should have no EXIF`);
   }
+});
+
+test('a photo is ready before AVIF, and AVIF follows on its own', async () => {
+  const buf = await sharp({ create: { width: 1200, height: 800, channels: 3, background: '#336699' } }).jpeg().toBuffer();
+  const { id } = await ingest(db, dataDir, buf, 'two-stage.jpg');
+  await processPhoto(db, dataDir, id);
+
+  const row = () => db.prepare('SELECT status, avif_ready FROM photos WHERE id = ?').get(id);
+  assert.deepEqual({ ...row() }, { status: 'ready', avif_ready: 0 });
+  const derivedDir = join(dataDir, 'derived', id);
+  assert.ok(existsSync(join(derivedDir, '960.jpg')));
+  assert.ok(!existsSync(join(derivedDir, '960.avif')));
+
+  await encodeAvif(db, dataDir, id);
+  assert.equal(row().avif_ready, 1);
+  assert.ok(existsSync(join(derivedDir, '960.avif')));
+  assert.equal(readdirSync(derivedDir).filter((f) => f.includes('.tmp-')).length, 0);
 });

@@ -50,6 +50,8 @@
 
     const arr = Array.from(files);
     const queue = [...arr];
+    uploads.total += arr.length;
+    renderQueue();
     const concurrency = 2;
 
     async function uploadOne(file) {
@@ -80,7 +82,9 @@
         const data = JSON.parse(xhr.responseText);
         bar.style.width = '100%';
         status.textContent = data.duplicate ? 'Duplicate' : 'Uploaded';
-        if (!data.duplicate) pollStatus(data.id, row, status);
+        if (data.duplicate) return;
+        row.remove();
+        pollQueue();
       } catch {
         status.textContent = 'Error';
         bar.classList.add('err');
@@ -93,6 +97,8 @@
       async function next() {
         while (queue.length) {
           await uploadOne(queue.shift());
+          uploads.done += 1;
+          renderQueue();
         }
       }
       await Promise.all(workers);
@@ -101,19 +107,242 @@
     runQueue();
   }
 
-  async function pollStatus(id, row, statusEl) {
-    for (let i = 0; i < 30; i++) {
-      await delay(2000);
-      try {
-        const res = await fetch('/admin/api/photos/status?ids=' + id);
-        if (!res.ok) continue;
-        const data = await res.json();
-        const p = data.photos.find(x => x.id === id);
-        if (!p) continue;
-        if (p.status === 'ready') { statusEl.textContent = 'Ready'; return; }
-        if (p.status === 'failed') { statusEl.textContent = 'Failed'; row.querySelector('.progress-bar').classList.add('err'); return; }
-        statusEl.textContent = p.status;
-      } catch {}
+  // --- Processing numbers ---
+  const queuePanel = document.getElementById('queue-panel');
+  const uploads = { done: 0, total: 0 };
+  const jobList = document.getElementById('job-list');
+  const STATUS_LABELS = { pending: 'Waiting', processing: 'Processing', ready: 'Ready', failed: 'Failed' };
+  let lastQueue = null;
+
+  function formatDuration(seconds) {
+    if (seconds < 90) return 'under 2 min';
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + ' min';
+    return Math.floor(minutes / 60) + ' h ' + (minutes % 60) + ' min';
+  }
+
+  function renderQueue() {
+    if (!queuePanel) return;
+    const q = lastQueue;
+    const uploading = uploads.done < uploads.total;
+    if (!q || (!q.total && !uploading)) return;
+    const processed = q.ready + q.failed;
+    const parts = [];
+    if (uploading) parts.push('Uploading ' + (uploads.done + 1) + ' of ' + uploads.total);
+    if (q.processing) parts.push(q.processing + ' processing');
+    if (q.pending) parts.push(q.pending + ' waiting');
+    if (q.failed) parts.push(q.failed + ' failed');
+    if (q.secondsPerPhoto && (q.pending || q.processing)) parts.push(q.secondsPerPhoto + ' s per photo');
+    if (q.secondsLeft) parts.push('about ' + formatDuration(q.secondsLeft) + ' left');
+    if (q.avifLeft) parts.push(q.avifLeft + ' AVIF in background');
+    if (q.privacyToReview) parts.push(q.privacyToReview + ' to review in Privacy');
+    if (!parts.length) parts.push('All done');
+    document.getElementById('queue-title').textContent = processed + ' of ' + q.total + ' processed';
+    document.getElementById('queue-detail').textContent = parts.join(' \u00b7 ');
+    document.getElementById('queue-bar').style.width = (q.total ? Math.round((processed / q.total) * 100) : 0) + '%';
+    queuePanel.classList.remove('hidden');
+    renderJobs(q.jobs);
+  }
+
+  function renderJobs(jobs) {
+    if (!jobList) return;
+    jobList.replaceChildren(...jobs.map((job) => {
+      const row = document.createElement('div');
+      row.className = 'upload-row job-row job-' + job.status;
+      const name = document.createElement('span');
+      name.textContent = job.original_name;
+      const status = document.createElement('span');
+      status.className = 'up-status';
+      status.textContent = STATUS_LABELS[job.status] || job.status;
+      row.append(name, status);
+      return row;
+    }));
+  }
+
+  async function pollQueue() {
+    try {
+      const res = await fetch('/admin/api/queue');
+      if (res.ok) lastQueue = await res.json();
+      renderQueue();
+    } catch { /* next tick retries */ }
+  }
+
+  if (queuePanel) {
+    pollQueue();
+    setInterval(pollQueue, 3000);
+    window.addEventListener('beforeunload', (e) => {
+      if (uploads.done < uploads.total) e.preventDefault();
+    });
+  }
+
+  // --- AI switches ---
+  document.querySelectorAll('[data-setting]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const res = await fetch('/admin/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: input.dataset.setting, value: input.checked })
+      }).catch(() => null);
+      if (!res || !res.ok) input.checked = !input.checked;
+    });
+  });
+
+  // --- Privacy page ---
+  const privacyListEl = document.getElementById('privacy-list');
+  if (privacyListEl) {
+    const countEl = document.getElementById('privacy-count');
+    const percent = (v) => (v * 100).toFixed(2) + '%';
+
+    function placeBox(el, box) {
+      el.style.left = percent(box.x1);
+      el.style.top = percent(box.y1);
+      el.style.width = percent(box.x2 - box.x1);
+      el.style.height = percent(box.y2 - box.y1);
+    }
+
+    function addBox(stage, box) {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'privacy-box privacy-' + box.type;
+      el.classList.toggle('is-off', !box.blur);
+      el.setAttribute('aria-label', box.type + ' blur');
+      placeBox(el, box);
+      el.addEventListener('click', () => {
+        box.blur = !box.blur;
+        el.classList.toggle('is-off', !box.blur);
+      });
+      stage.append(el);
+    }
+
+    privacyListEl.querySelectorAll('.privacy-stage').forEach((stage) => {
+      stage.boxes = JSON.parse(stage.dataset.boxes);
+      stage.boxes.forEach((box) => addBox(stage, box));
+
+      let drawing = null;
+      stage.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('.privacy-box')) return;
+        e.preventDefault();
+        const rect = stage.getBoundingClientRect();
+        const start = { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height };
+        const el = document.createElement('div');
+        el.className = 'privacy-box privacy-manual';
+        stage.append(el);
+        drawing = { rect, start, el, box: null };
+        stage.setPointerCapture(e.pointerId);
+      });
+      stage.addEventListener('pointermove', (e) => {
+        if (!drawing) return;
+        const { rect, start, el } = drawing;
+        const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+        drawing.box = { type: 'manual', blur: true, x1: Math.min(start.x, x), y1: Math.min(start.y, y), x2: Math.max(start.x, x), y2: Math.max(start.y, y) };
+        placeBox(el, drawing.box);
+      });
+      stage.addEventListener('pointerup', () => {
+        if (!drawing) return;
+        const { el, box } = drawing;
+        drawing = null;
+        el.remove();
+        if (box && box.x2 - box.x1 > 0.01 && box.y2 - box.y1 > 0.01) {
+          stage.boxes.push(box);
+          addBox(stage, box);
+        }
+      });
+    });
+
+    function sendPrivacy(row, action) {
+      return fetch('/admin/api/privacy/' + row.dataset.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, boxes: row.querySelector('.privacy-stage').boxes })
+      }).catch(() => null);
+    }
+
+    function dropPrivacyRow(row) {
+      row.remove();
+      if (countEl) countEl.textContent = privacyListEl.querySelectorAll('.privacy-row').length + ' to review';
+    }
+
+    privacyListEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-privacy-action]');
+      if (!btn) return;
+      const row = btn.closest('.privacy-row');
+      const action = btn.dataset.privacyAction;
+      btn.disabled = true;
+      const res = await sendPrivacy(row, action);
+      btn.disabled = false;
+      if (!res || !res.ok) btn.textContent = 'Failed, retry';
+      else if (action === 'rescan') btn.textContent = 'Queued';
+      else if (privacyListEl.dataset.view === 'reviewed') btn.textContent = 'Saved';
+      else dropPrivacyRow(row);
+    });
+
+    const approveAllPrivacy = document.getElementById('privacy-approve-all');
+    if (approveAllPrivacy) {
+      approveAllPrivacy.addEventListener('click', async () => {
+        approveAllPrivacy.disabled = true;
+        for (const row of privacyListEl.querySelectorAll('.privacy-row')) {
+          const res = await sendPrivacy(row, 'approve');
+          if (res && res.ok) dropPrivacyRow(row);
+        }
+        location.reload();
+      });
+    }
+  }
+
+  // --- Captions page ---
+  const captionList = document.getElementById('caption-list');
+  if (captionList) {
+    const countEl = document.getElementById('caption-count');
+
+    function splitLabels(text) {
+      return text.split(',').map((v) => v.trim()).filter(Boolean);
+    }
+
+    function dropRow(row) {
+      row.remove();
+      const left = captionList.querySelectorAll('.caption-draft').length;
+      if (countEl) countEl.textContent = left + ' to review';
+    }
+
+    function sendCaption(row, action) {
+      return fetch('/admin/api/captions/' + row.dataset.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          caption: row.querySelector('.draft-title').value,
+          description: row.querySelector('.draft-description').value,
+          tags: splitLabels(row.querySelector('.draft-tags').value),
+          moods: splitLabels(row.querySelector('.draft-moods').value),
+          details: splitLabels(row.querySelector('.draft-details').value)
+        })
+      }).catch(() => null);
+    }
+
+    captionList.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-caption-action]');
+      if (!btn) return;
+      const row = btn.closest('.caption-draft');
+      btn.disabled = true;
+      const res = await sendCaption(row, btn.dataset.captionAction);
+      btn.disabled = false;
+      if (!res || !res.ok) btn.textContent = 'Failed, retry';
+      else if (captionList.dataset.view === 'approved') btn.textContent = 'Saved';
+      else dropRow(row);
+    });
+
+    const approveAll = document.getElementById('caption-approve-all');
+    if (approveAll) {
+      approveAll.addEventListener('click', async () => {
+        // Sends each row as shown, so your edits count and drafts written meanwhile wait for review
+        approveAll.disabled = true;
+        for (const row of captionList.querySelectorAll('.caption-draft')) {
+          const res = await sendCaption(row, 'approve');
+          if (res && res.ok) dropRow(row);
+        }
+        location.reload();
+      });
     }
   }
 
@@ -130,9 +359,27 @@
       const id = card.dataset.id;
       if (selected.has(id)) { selected.delete(id); card.classList.remove('selected'); }
       else { selected.add(id); card.classList.add('selected'); }
+      syncSelection();
+    });
+
+    function syncSelection() {
       if (selected.size) { actionBar.classList.remove('hidden'); selCount.textContent = selected.size + ' selected'; }
       else { actionBar.classList.add('hidden'); }
-    });
+      const selectAll = document.getElementById('select-all');
+      if (selectAll) selectAll.checked = selected.size > 0 && selected.size === photoGrid.querySelectorAll('.photo-card').length;
+    }
+
+    const selectAll = document.getElementById('select-all');
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        photoGrid.querySelectorAll('.photo-card').forEach((card) => {
+          card.classList.toggle('selected', selectAll.checked);
+          if (selectAll.checked) selected.add(card.dataset.id);
+          else selected.delete(card.dataset.id);
+        });
+        syncSelection();
+      });
+    }
 
     // Caption blur save
     photoGrid.addEventListener('blur', (e) => {
@@ -189,19 +436,33 @@
   const albumTable = document.querySelector('.admin-table');
   if (albumTable) {
     albumTable.addEventListener('change', (e) => {
-      const input = e.target;
+      if (e.target.dataset.field) saveAlbumField(e.target);
+    });
+
+    // The description also saves while you type, so leaving the page cannot lose it
+    let descTimer = null;
+    albumTable.addEventListener('input', (e) => {
+      if (!e.target.classList.contains('album-desc')) return;
+      const state = e.target.closest('td').querySelector('.album-save-state');
+      state.textContent = 'Saving\u2026';
+      clearTimeout(descTimer);
+      descTimer = setTimeout(() => saveAlbumField(e.target), 800);
+    });
+
+    async function saveAlbumField(input) {
       const field = input.dataset.field;
-      if (!field) return;
-      const tr = input.closest('tr');
-      const id = tr.dataset.id;
-      let body = {};
+      const id = input.closest('tr').dataset.id;
+      const state = input.closest('td').querySelector('.album-save-state');
+      const body = {};
       body[field] = input.type === 'checkbox' ? input.checked : input.value;
-      fetch('/admin/api/albums/' + id, {
+      const res = await fetch('/admin/api/albums/' + id, {
         method: 'PATCH',
+        keepalive: true,
         headers: { 'Content-Type': 'application/json', 'Origin': location.origin },
         body: JSON.stringify(body)
-      });
-    });
+      }).catch(() => null);
+      if (state) state.textContent = res && res.ok ? 'Saved' : 'Not saved, try again';
+    }
 
     albumTable.addEventListener('click', async (e) => {
       const btn = e.target.closest('button');
@@ -215,6 +476,12 @@
           headers: { 'Origin': location.origin }
         });
         if (res.ok) tr.remove();
+      }
+      if (btn.classList.contains('btn-publish-album')) {
+        btn.disabled = true;
+        const res = await fetch('/admin/api/albums/' + id + '/publish', { method: 'POST' }).catch(() => null);
+        if (res && res.ok) location.reload();
+        else { btn.disabled = false; btn.textContent = 'Failed, retry'; }
       }
       if (btn.classList.contains('btn-set-cover')) {
         // For simplicity, prompt for photo id
