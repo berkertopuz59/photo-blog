@@ -313,6 +313,34 @@ describe('Admin routes', () => {
     });
   });
 
+  describe('Comment email', () => {
+    it('offers a reply link, escapes it, and forgets the address on rejection', async () => {
+      const { app, db } = makeApp();
+      const loginRes = await app.request('/admin/login', {
+        method: 'POST',
+        headers: { origin: 'http://localhost:3000' },
+        body: new URLSearchParams({ username: 'admin', password: 'correct-horse' }),
+      });
+      const cookie = getCookie(loginRes);
+      db.prepare(`INSERT INTO photos (id, original_name, original_ext, original_sha256, status, created_at)
+        VALUES ('abcdef1234567890', 'x.jpg', 'jpg', 'sha1', 'ready', '2024-01-01T00:00:00Z')`).run();
+      db.prepare(`INSERT INTO comments (photo_id, author, body, email, status, visitor, created_at)
+        VALUES ('abcdef1234567890', 'Jane', 'Nice', ?, 'pending', 'v', '2024-01-01T00:00:00Z')`).run('jane+"x@example.org');
+
+      const page = await (await app.request('/admin/comments', { headers: { cookie: `sid=${cookie}` } })).text();
+      assert.ok(page.includes('href="mailto:jane%2B%22x@example.org?subject=Your%20comment"'));
+      assert.ok(page.includes('Reply to jane+&quot;x@example.org'));
+
+      const res = await app.request('/admin/api/comments/1', {
+        method: 'POST',
+        headers: { cookie: `sid=${cookie}`, origin: 'http://localhost:3000', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject' }),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(db.prepare('SELECT email FROM comments WHERE id = 1').get().email, '');
+    });
+  });
+
   describe('CSP', () => {
     it('admin pages carry the required CSP', async () => {
       const { app } = makeApp();

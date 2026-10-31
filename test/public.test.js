@@ -156,6 +156,29 @@ describe('Public routes', () => {
     assert.equal(count, 0);
   });
 
+  test('an email is stored for the admin and never reaches the public page', async () => {
+    const { app, db } = makeApp();
+    const id = insertPhoto(db);
+    const post = (email) => app.request('/api/photos/' + id + '/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ author: 'User', body: 'Lovely', website: '', token: 'good-token', email }),
+    });
+
+    const bad = await post('not-an-email');
+    assert.equal(bad.status, 400);
+    assert.equal((await bad.json()).error, 'email');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM comments').get().n, 0);
+
+    assert.equal((await post('reader@example.org')).status, 200);
+    assert.equal(db.prepare('SELECT email FROM comments').get().email, 'reader@example.org');
+
+    db.prepare("UPDATE comments SET status = 'approved'").run();
+    const page = await (await app.request('/p/' + id)).text();
+    assert.ok(page.includes('Lovely'));
+    assert.ok(!page.includes('reader@example.org'));
+  });
+
   test('good comment is pending and NOT in the page HTML', async () => {
     const { app, db } = makeApp();
     const id = insertPhoto(db);

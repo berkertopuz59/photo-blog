@@ -179,6 +179,7 @@
         var payload = {
           author: formData.get('author'),
           body: formData.get('body'),
+          email: formData.get('email'),
           website: formData.get('website'),
           token: '',
         };
@@ -206,12 +207,14 @@
             msgEl.textContent = 'Thanks, your comment will appear after review.';
             cform.querySelector('[name="author"]').value = '';
             cform.querySelector('[name="body"]').value = '';
+            cform.querySelector('[name="email"]').value = '';
           })
           .catch(function (err) {
             var messages = {
               links: 'Links are not allowed in comments.',
               author: 'Please add a name, 40 characters at most.',
               body: 'Please write a comment, 1000 characters at most.',
+              email: 'That email address does not look right.',
               'rate limited': 'Too many comments for now. Please try again later.',
               'queue full': 'Comments are paused for a moment. Please try again later.',
               'turnstile failed': 'The spam check failed. Please try again.',

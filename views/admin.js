@@ -184,6 +184,7 @@ export function commentsView(pending, all) {
         <strong>${escapeHtml(c.author)}</strong>
         <p>${escapeHtml(c.body)}</p>
         <small>${escapeHtml(c.created_at)}</small>
+        ${c.email ? `<small class="comment-email"><a href="mailto:${escapeHtml(encodeURIComponent(c.email).replace('%40', '@'))}?subject=${encodeURIComponent('Your comment')}">Reply to ${escapeHtml(c.email)}</a></small>` : ''}
       </div>
       ${showActions ? `<div class="comment-actions">
         <button class="btn btn-sm btn-approve" data-id="${c.id}">Approve</button>

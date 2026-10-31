@@ -5,7 +5,7 @@ A small self-hosted photo site with albums. Upload from a private admin page and
 - **Automatic optimizing:** WebP and JPEG at up to five sizes within seconds, then AVIF in the background, so every screen gets only what it needs
 - **EXIF on every photo:** camera, lens, settings, editor and crop percentage, read with exiftool
 - **Private by default:** GPS and all other metadata are removed from public images, and originals are never served
-- **Likes and comments without accounts:** comments stay hidden until you approve them
+- **Likes and comments without accounts:** comments stay hidden until you approve them, and a visitor can leave an optional email that only you see, so you can reply
 - **Bot protection:** Cloudflare Turnstile, a honeypot, a no-links rule and rate limits
 - **Stats without tracking:** views per photo, countries, referrers and a 30-day failure log, with no IP addresses or analytics cookies
 - **AI drafts, optional:** any OpenAI-compatible vision model suggests a title, description, tags and moods, and nothing goes public until you approve it

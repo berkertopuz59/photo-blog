@@ -157,6 +157,14 @@ describe('validateComment', () => {
     assert.equal(r.body, 'Nice photo!');
   });
 
+  it('takes an optional email and turns away a bad one', () => {
+    assert.equal(validateComment({ author: 'A', body: 'Hi' }).email, '');
+    assert.equal(validateComment({ author: 'A', body: 'Hi', email: '  a.b+c@mail.example.org ' }).email, 'a.b+c@mail.example.org');
+    for (const email of ['nope', 'a@b', 'a b@c.de', 'a@b@c.de', 'a@b..de', '<a@b.de>', `${'a'.repeat(250)}@b.de`, 'a@b.de\nBcc: x@y.de']) {
+      assert.equal(validateComment({ author: 'A', body: 'Hi', email }).error, 'email', email);
+    }
+  });
+
   it('rejects honeypot filled', () => {
     const r = validateComment({ author: 'A', body: 'Hi', website: 'spam.com' });
     assert.deepEqual(r, { ok: false, error: 'honeypot' });

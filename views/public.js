@@ -234,13 +234,14 @@ function shell(title, bodyContent, opts = {}) {
 <h2 class="section-heading">Leave a comment</h2>
 <form method="post" action="/api/photos/${escapeHtml(photo.id)}/comments">
 <label class="form-label">Name<input name="author" type="text" maxlength="40" required autocomplete="name"></label>
+<label class="form-label">Email (optional)<input name="email" type="email" maxlength="254" autocomplete="email"></label>
 <label class="form-label">Comment<textarea name="body" maxlength="1000" required></textarea></label>
 <div class="hp-field"><input name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true"></div>
 <div id="turnstile-container"></div>
 <button type="submit" class="submit-btn">Post</button>
 <p class="form-msg" aria-live="polite"></p>
 </form>
-<p class="review-note">Comments are reviewed before they appear.</p>
+<p class="review-note">Comments are reviewed before they appear. Your email is only for replying to you and is never shown on the site.</p>
 </section>`;
 
       // Left column

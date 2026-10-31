@@ -393,9 +393,9 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
         return c.json({ error: 'invalid json' }, 400);
       }
 
-      const { author, body: commentBody, website, token } = body || {};
+      const { author, body: commentBody, website, email, token } = body || {};
 
-      const validation = validateComment({ author, body: commentBody, website });
+      const validation = validateComment({ author, body: commentBody, website, email });
 
       if (!validation.ok) {
         logEvent(db, 'comment_blocked', validation.error);
@@ -425,8 +425,8 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
       }
 
       db.prepare(
-        "INSERT INTO comments (photo_id, author, body, status, visitor, created_at) VALUES (?, ?, ?, 'pending', ?, ?)"
-      ).run(id, validation.author, validation.body, visitor, nowIso());
+        "INSERT INTO comments (photo_id, author, body, email, status, visitor, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)"
+      ).run(id, validation.author, validation.body, validation.email, visitor, nowIso());
 
       return c.json({ ok: true, pending: true });
     }

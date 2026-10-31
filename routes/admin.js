@@ -586,6 +586,8 @@ export function adminRoutes({ db, config, dataDir }) {
     } else {
       const status = action === 'approve' ? 'approved' : 'rejected';
       db.prepare('UPDATE comments SET status = ? WHERE id = ?').run(status, id);
+      // No reason to keep an address from a comment you turned down
+      if (status === 'rejected') db.prepare("UPDATE comments SET email = '' WHERE id = ?").run(id);
     }
     return c.json({ ok: true });
   });

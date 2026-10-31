@@ -103,6 +103,7 @@ input[type="text"]:focus, input[type="password"]:focus, select:focus { border-co
 .comment-body { flex: 1; min-width: 200px; }
 .comment-body p { margin: 4px 0; color: var(--text); white-space: pre-line; }
 .comment-body small { color: var(--muted); }
+.comment-email { display: block; margin-top: 4px; overflow-wrap: anywhere; }
 .comment-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 @media (max-width: 600px) {
