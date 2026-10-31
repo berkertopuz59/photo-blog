@@ -356,12 +356,22 @@ export function privacyView(photos, { aiOn, reviewed }, pendingCount = 0) {
     const scan = p.privacy_scan === 'done' ? `${p.boxes.length} found by AI` : p.privacy_scan === 'failed' ? 'AI scan failed, check by hand' : 'Not scanned';
     return `
     <div class="privacy-row" data-id="${escapeHtml(p.id)}">
-      <div class="privacy-stage" data-boxes="${escapeHtml(JSON.stringify(p.boxes))}"><img src="/admin/preview/${escapeHtml(p.id)}" alt="" loading="lazy" draggable="false"></div>
+      <div class="privacy-editor">
+        <div class="privacy-zoombar">
+          <small>${escapeHtml(p.original_name)}</small>
+          <label>Zoom <input type="range" min="100" max="400" step="25" value="100" data-privacy-zoom> <output>100%</output></label>
+          <button class="btn btn-sm" data-privacy-close>Done</button>
+        </div>
+        <div class="privacy-scroll">
+          <div class="privacy-stage" data-boxes="${escapeHtml(JSON.stringify(p.boxes))}"><img src="/admin/preview/${escapeHtml(p.id)}" alt="" loading="lazy" draggable="false"></div>
+        </div>
+      </div>
       <div class="privacy-side">
         <small>${escapeHtml(p.album_title || 'No album')} \u00b7 ${escapeHtml(p.original_name)}</small>
         <p class="privacy-scan">${escapeHtml(scan)}${p.is_published && p.privacy_ok ? ' \u00b7 live' : ''}</p>
         <div class="caption-actions">
           <button class="btn btn-sm btn-approve" data-privacy-action="approve">${reviewed ? 'Save' : 'Approve'}</button>
+          <button class="btn btn-sm" data-privacy-open>Enlarge</button>
           ${aiOn ? '<button class="btn btn-sm" data-privacy-action="rescan">Scan again</button>' : ''}
         </div>
       </div>
@@ -374,7 +384,7 @@ ${nav(pendingCount)}
 <main class="admin-main">
 <h1>Privacy</h1>
 <p>Blurred areas are baked into every public version. Your original stays private. New photos stay offline until you approve them here.</p>
-<p class="privacy-help">Click a box to turn its blur off or on. Drag on the photo to add a box.</p>
+<p class="privacy-help">Click a box to select it. Then drag to move it, pull a corner to resize it, or remove it. Drag on the photo to add a box. Enlarge opens it full screen with zoom.</p>
 ${aiStatus(aiOn, 'The AI face and plate scan is')}
 <nav class="caption-tabs"><a href="/admin/privacy"${reviewed ? '' : ' aria-current="page"'}>To review</a><a href="/admin/privacy?view=reviewed"${reviewed ? ' aria-current="page"' : ''}>Reviewed</a></nav>
 ${rows && !reviewed ? `<div class="caption-toolbar"><span id="privacy-count">${photos.length} to review</span><button class="btn btn-sm" id="privacy-approve-all">Approve all</button></div>` : ''}

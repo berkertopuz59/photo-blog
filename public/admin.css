@@ -219,9 +219,42 @@ input[type="text"]:focus, input[type="password"]:focus, select:focus { border-co
 .privacy-row { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
 .privacy-stage { position: relative; line-height: 0; justify-self: start; align-self: start; width: fit-content; max-width: min(100%, 720px); cursor: crosshair; user-select: none; touch-action: pan-y; }
 .privacy-stage img { display: block; width: auto; max-width: 100%; height: auto; max-height: 70vh; border-radius: 2px; }
-.privacy-box { position: absolute; padding: 0; border: 2px solid var(--accent); border-radius: 2px; background: transparent; backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); cursor: pointer; }
+.privacy-box { position: absolute; padding: 0; border: 2px solid var(--accent); border-radius: 2px; background: transparent; backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); cursor: move; }
 .privacy-plate { border-color: #ff2bd6; }
 .privacy-box.is-off { border-style: dashed; border-color: var(--muted); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.privacy-box.is-selected { z-index: 2; outline: 1px solid #fff; touch-action: none; }
+.privacy-handle { display: none; position: absolute; box-sizing: border-box; width: 14px; height: 14px; border: 2px solid #fff; border-radius: 2px; background: var(--accent); }
+.privacy-handle[data-handle="nw"] { top: -15px; left: -15px; cursor: nwse-resize; }
+.privacy-handle[data-handle="ne"] { top: -15px; right: -15px; cursor: nesw-resize; }
+.privacy-handle[data-handle="sw"] { bottom: -15px; left: -15px; cursor: nesw-resize; }
+.privacy-handle[data-handle="se"] { bottom: -15px; right: -15px; cursor: nwse-resize; }
+.privacy-tools { display: none; position: absolute; top: calc(100% + 18px); left: -2px; gap: 4px; line-height: 1.2; white-space: nowrap; cursor: default; }
+.privacy-box.tools-above .privacy-tools { top: auto; bottom: calc(100% + 18px); }
+.privacy-box.tools-left .privacy-tools { left: auto; right: -2px; }
+.privacy-box.is-selected .privacy-handle { display: block; }
+.privacy-box.is-selected .privacy-tools { display: flex; }
+@media (pointer: coarse) {
+  .privacy-handle { width: 24px; height: 24px; }
+  .privacy-handle[data-handle="nw"] { top: -20px; left: -20px; }
+  .privacy-handle[data-handle="ne"] { top: -20px; right: -20px; }
+  .privacy-handle[data-handle="sw"] { bottom: -20px; left: -20px; }
+  .privacy-handle[data-handle="se"] { bottom: -20px; right: -20px; }
+  .privacy-tools { top: calc(100% + 26px); }
+  .privacy-box.tools-above .privacy-tools { bottom: calc(100% + 26px); }
+}
+.privacy-editor { min-width: 0; }
+.privacy-zoombar { display: none; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-size: 13px; }
+.privacy-zoombar small { min-width: 0; margin-right: auto; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.privacy-zoombar label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.privacy-zoombar input { width: min(240px, 34vw); accent-color: var(--accent); }
+.privacy-zoombar output { min-width: 40px; color: var(--text); font-variant-numeric: tabular-nums; }
+.privacy-editor.is-open { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); }
+.privacy-editor.is-open .privacy-zoombar { display: flex; }
+.privacy-editor.is-open .privacy-scroll { position: relative; display: flex; flex: 1; min-height: 0; padding: 32px; overflow: auto; }
+.privacy-editor.is-open .privacy-stage { flex: none; max-width: none; margin: auto; touch-action: pan-x pan-y; }
+.privacy-editor.is-open .privacy-box { border-width: 1px; }
+.privacy-editor.is-open .privacy-stage img { width: 100%; max-width: none; max-height: none; }
+body.privacy-locked { overflow: hidden; }
 .privacy-side { display: flex; flex-direction: column; gap: 8px; }
 .privacy-side small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .admin-main p.privacy-scan { color: var(--text); font-size: 14px; }

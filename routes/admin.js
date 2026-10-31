@@ -7,7 +7,7 @@ import { slugify } from '../lib/slug.js';
 import { nowIso } from '../lib/db.js';
 import { captionDrafts, approvedCaptions, cleanLabels } from '../lib/captions.js';
 import { privacyList, reviewPhoto } from '../lib/privacy.js';
-import { ensurePreview, previewPath } from '../lib/images.js';
+import { ensurePreview, largePreview, previewPath } from '../lib/images.js';
 import { loadWatermark, watermarkPreview } from '../lib/watermark.js';
 import { NUMBER_SETTINGS, SETTING_KEYS, aiCalls, aiConfigured, aiEnabled, getSetting, isOn, setSetting } from '../lib/settings.js';
 import { logEvent, queueStats, libraryStats, trafficStats, recentEvents } from '../lib/stats.js';
@@ -278,6 +278,17 @@ export function adminRoutes({ db, config, dataDir }) {
       }
     }
     return c.text('Not found', 404);
+  });
+
+  app.get('/preview/:id/large', async (c) => {
+    const id = c.req.param('id');
+    if (!PHOTO_ID_RE.test(id)) return c.text('Not found', 404);
+    const photo = db.prepare('SELECT id, original_ext FROM photos WHERE id = ?').get(id);
+    const data = photo ? await largePreview(dataDir, photo).catch(() => null) : null;
+    if (!data) return c.text('Not found', 404);
+    c.header('Content-Type', 'image/jpeg');
+    c.header('Cache-Control', 'private, no-store');
+    return c.body(data);
   });
 
   app.get('/captions', (c) => {

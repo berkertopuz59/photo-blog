@@ -233,61 +233,245 @@
     const countEl = document.getElementById('privacy-count');
     const percent = (v) => (v * 100).toFixed(2) + '%';
 
+    // Measured on screen, so zooming in allows a smaller box
+    const MIN_BOX_PX = 4;
+    const clamp = (v) => Math.min(1, Math.max(0, v));
+    const pointIn = (rect, e) => ({ x: clamp((e.clientX - rect.left) / rect.width), y: clamp((e.clientY - rect.top) / rect.height) });
+    let selected = null;
+
     function placeBox(el, box) {
       el.style.left = percent(box.x1);
       el.style.top = percent(box.y1);
       el.style.width = percent(box.x2 - box.x1);
       el.style.height = percent(box.y2 - box.y1);
+      el.classList.toggle('tools-above', box.y2 > 0.8);
+      el.classList.toggle('tools-left', box.x1 > 0.6);
+    }
+
+    function select(el) {
+      if (selected === el) return;
+      if (selected) selected.classList.remove('is-selected');
+      selected = el;
+      if (el) {
+        el.classList.add('is-selected');
+        el.focus({ preventScroll: true });
+      }
+    }
+
+    function showBlur(el) {
+      el.classList.toggle('is-off', !el.box.blur);
+      el.querySelector('[data-box-toggle]').textContent = el.box.blur ? 'Turn blur off' : 'Turn blur on';
     }
 
     function addBox(stage, box) {
-      const el = document.createElement('button');
-      el.type = 'button';
+      const el = document.createElement('div');
       el.className = 'privacy-box privacy-' + box.type;
-      el.classList.toggle('is-off', !box.blur);
+      el.tabIndex = 0;
+      el.setAttribute('role', 'button');
       el.setAttribute('aria-label', box.type + ' blur');
+      el.innerHTML = ['nw', 'ne', 'sw', 'se'].map((h) => `<span class="privacy-handle" data-handle="${h}"></span>`).join('')
+        + '<span class="privacy-tools"><button type="button" class="btn btn-sm" data-box-toggle></button><button type="button" class="btn btn-sm btn-danger" data-box-remove>Remove</button></span>';
+      el.box = box;
       placeBox(el, box);
-      el.addEventListener('click', () => {
-        box.blur = !box.blur;
-        el.classList.toggle('is-off', !box.blur);
-      });
+      showBlur(el);
       stage.append(el);
+      return el;
     }
+
+    function toggleBlur(el) {
+      el.box.blur = !el.box.blur;
+      showBlur(el);
+    }
+
+    function removeBox(stage, el) {
+      stage.boxes = stage.boxes.filter((box) => box !== el.box);
+      if (selected === el) select(null);
+      el.remove();
+    }
+
+    // A box you corrected by hand survives a later scan, same as one you drew
+    function markManual(el) {
+      el.box.type = 'manual';
+      el.classList.remove('privacy-face', 'privacy-plate');
+      el.classList.add('privacy-manual');
+      el.setAttribute('aria-label', 'manual blur');
+    }
+
+    document.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('.privacy-stage, .privacy-zoombar')) select(null);
+    });
 
     privacyListEl.querySelectorAll('.privacy-stage').forEach((stage) => {
       stage.boxes = JSON.parse(stage.dataset.boxes);
       stage.boxes.forEach((box) => addBox(stage, box));
 
-      let drawing = null;
+      let drag = null;
       stage.addEventListener('pointerdown', (e) => {
-        if (e.target.closest('.privacy-box')) return;
+        if (e.target.closest('.privacy-tools')) return;
         e.preventDefault();
         const rect = stage.getBoundingClientRect();
-        const start = { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height };
-        const el = document.createElement('div');
-        el.className = 'privacy-box privacy-manual';
-        stage.append(el);
-        drawing = { rect, start, el, box: null };
+        const start = pointIn(rect, e);
+        const box = e.target.closest('.privacy-box');
+        if (box) {
+          select(box);
+          drag = { rect, start, el: box, handle: e.target.dataset.handle, origin: { ...box.box }, moved: false };
+        } else {
+          select(null);
+          const el = document.createElement('div');
+          el.className = 'privacy-box privacy-manual';
+          stage.append(el);
+          drag = { rect, start, el, drawing: true, box: null };
+        }
         stage.setPointerCapture(e.pointerId);
       });
       stage.addEventListener('pointermove', (e) => {
-        if (!drawing) return;
-        const { rect, start, el } = drawing;
-        const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-        const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
-        drawing.box = { type: 'manual', blur: true, x1: Math.min(start.x, x), y1: Math.min(start.y, y), x2: Math.max(start.x, x), y2: Math.max(start.y, y) };
-        placeBox(el, drawing.box);
+        if (!drag) return;
+        const { rect, start, el, handle, origin } = drag;
+        const { x, y } = pointIn(rect, e);
+        if (drag.drawing) {
+          drag.box = { type: 'manual', blur: true, x1: Math.min(start.x, x), y1: Math.min(start.y, y), x2: Math.max(start.x, x), y2: Math.max(start.y, y) };
+          placeBox(el, drag.box);
+          return;
+        }
+        if (!drag.moved && Math.hypot((x - start.x) * rect.width, (y - start.y) * rect.height) < 3) return;
+        drag.moved = true;
+        const box = el.box;
+        if (handle) {
+          const minX = MIN_BOX_PX / rect.width;
+          const minY = MIN_BOX_PX / rect.height;
+          if (handle.includes('w')) box.x1 = Math.min(x, origin.x2 - minX);
+          if (handle.includes('e')) box.x2 = Math.max(x, origin.x1 + minX);
+          if (handle.includes('n')) box.y1 = Math.min(y, origin.y2 - minY);
+          if (handle.includes('s')) box.y2 = Math.max(y, origin.y1 + minY);
+        } else {
+          const dx = Math.min(1 - origin.x2, Math.max(-origin.x1, x - start.x));
+          const dy = Math.min(1 - origin.y2, Math.max(-origin.y1, y - start.y));
+          Object.assign(box, { x1: origin.x1 + dx, x2: origin.x2 + dx, y1: origin.y1 + dy, y2: origin.y2 + dy });
+        }
+        placeBox(el, box);
       });
       stage.addEventListener('pointerup', () => {
-        if (!drawing) return;
-        const { el, box } = drawing;
-        drawing = null;
+        if (!drag) return;
+        const { el, box, drawing, moved, rect } = drag;
+        drag = null;
+        if (!drawing) {
+          if (moved) markManual(el);
+          return;
+        }
         el.remove();
-        if (box && box.x2 - box.x1 > 0.01 && box.y2 - box.y1 > 0.01) {
+        if (box && (box.x2 - box.x1) * rect.width >= MIN_BOX_PX && (box.y2 - box.y1) * rect.height >= MIN_BOX_PX) {
           stage.boxes.push(box);
-          addBox(stage, box);
+          select(addBox(stage, box));
         }
       });
+      // The browser took over, for example a phone scrolling the page
+      stage.addEventListener('pointercancel', () => {
+        if (!drag) return;
+        const { el, drawing, origin } = drag;
+        drag = null;
+        if (drawing) {
+          el.remove();
+        } else {
+          Object.assign(el.box, origin);
+          placeBox(el, el.box);
+        }
+      });
+
+      stage.addEventListener('click', (e) => {
+        const el = e.target.closest('.privacy-box');
+        if (!el) return;
+        if (e.target.closest('[data-box-remove]')) removeBox(stage, el);
+        else if (e.target.closest('[data-box-toggle]')) toggleBlur(el);
+      });
+      stage.addEventListener('focusin', (e) => {
+        const el = e.target.closest('.privacy-box');
+        if (el) select(el);
+      });
+      stage.addEventListener('keydown', (e) => {
+        if (!selected || !stage.contains(selected)) return;
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          select(null);
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          removeBox(stage, selected);
+        } else if (e.target === selected && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          toggleBlur(selected);
+        }
+      });
+    });
+
+    // The stage keeps every box as a percentage, so resizing it is all zoom needs
+    const EDITOR_PADDING = 32;
+    let enlarged = null;
+
+    function setZoom(editor, zoom) {
+      const scroll = editor.querySelector('.privacy-scroll');
+      const stage = editor.querySelector('.privacy-stage');
+      const img = stage.querySelector('img');
+      const fit = Math.min(scroll.clientWidth - EDITOR_PADDING * 2, (scroll.clientHeight - EDITOR_PADDING * 2) * img.naturalWidth / img.naturalHeight);
+      // Stay on the selected box, or on the middle of what is in view
+      const box = selected && stage.contains(selected) ? selected.box : null;
+      const x = box ? (box.x1 + box.x2) / 2 : (scroll.scrollLeft + scroll.clientWidth / 2 - stage.offsetLeft) / stage.offsetWidth;
+      const y = box ? (box.y1 + box.y2) / 2 : (scroll.scrollTop + scroll.clientHeight / 2 - stage.offsetTop) / stage.offsetHeight;
+      stage.style.width = Math.round(fit * zoom / 100) + 'px';
+      scroll.scrollLeft = stage.offsetLeft + x * stage.offsetWidth - scroll.clientWidth / 2;
+      scroll.scrollTop = stage.offsetTop + y * stage.offsetHeight - scroll.clientHeight / 2;
+      editor.querySelector('output').textContent = zoom + '%';
+    }
+
+    // Swaps in the sharper copy once it arrives. If it fails, the review copy stays.
+    function loadLarge(editor, id) {
+      const img = editor.querySelector('.privacy-stage img');
+      if (img.dataset.large) return;
+      const large = new Image();
+      large.alt = '';
+      large.draggable = false;
+      large.dataset.large = '1';
+      large.addEventListener('load', () => img.replaceWith(large));
+      large.src = '/admin/preview/' + id + '/large';
+    }
+
+    async function openEditor(editor, id) {
+      const img = editor.querySelector('.privacy-stage img');
+      img.loading = 'eager';
+      await img.decode().catch(() => {});
+      enlarged = editor;
+      editor.classList.add('is-open');
+      document.body.classList.add('privacy-locked');
+      editor.querySelector('[data-privacy-zoom]').value = 100;
+      setZoom(editor, 100);
+      loadLarge(editor, id);
+    }
+
+    function closeEditor() {
+      select(null);
+      enlarged.classList.remove('is-open');
+      enlarged.querySelector('.privacy-stage').style.width = '';
+      document.body.classList.remove('privacy-locked');
+      enlarged = null;
+    }
+
+    privacyListEl.addEventListener('click', (e) => {
+      const open = e.target.closest('[data-privacy-open]');
+      if (open) {
+        const row = open.closest('.privacy-row');
+        openEditor(row.querySelector('.privacy-editor'), row.dataset.id);
+      } else if (e.target.closest('[data-privacy-close]')) {
+        closeEditor();
+      }
+    });
+    privacyListEl.addEventListener('input', (e) => {
+      if (e.target.matches('[data-privacy-zoom]')) setZoom(e.target.closest('.privacy-editor'), Number(e.target.value));
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !enlarged) return;
+      if (selected) select(null);
+      else closeEditor();
+    });
+    window.addEventListener('resize', () => {
+      if (enlarged) setZoom(enlarged, Number(enlarged.querySelector('[data-privacy-zoom]').value));
     });
 
     function sendPrivacy(row, action) {

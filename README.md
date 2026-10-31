@@ -9,7 +9,7 @@ A small self-hosted photo site with albums. Upload from a private admin page and
 - **Bot protection:** Cloudflare Turnstile, a honeypot, a no-links rule and rate limits
 - **Stats without tracking:** views per photo, countries, referrers and a 30-day failure log, with no IP addresses or analytics cookies
 - **AI drafts, optional:** any OpenAI-compatible vision model suggests a title, description, tags and moods, and nothing goes public until you approve it
-- **Privacy review:** an optional AI scan proposes face and license plate blurs, you adjust them, and new photos stay offline until approved
+- **Privacy review:** an optional AI scan proposes face and license plate blurs, you move, resize or remove each box at up to 400% zoom, and new photos stay offline until approved
 - **Your signature, optional:** a transparent SVG becomes a watermark, placed in the calmer bottom corner in light or dark ink, with camera settings under it if you want them
 - **Works on phones:** swipe between photos, and the admin works there too
 
@@ -38,9 +38,9 @@ Both are optional and off until you set `CAPTION_API_URL`, `CAPTION_API_KEY` and
 
 **Captions.** The model looks at each uncaptioned photo and drafts a title, description, tags and moods. Drafts wait on the Captions page, and you approve, edit or dismiss them. Nothing shows on the site until you approve it.
 
-**Blur.** The model marks faces and readable license plates, and each box is enlarged by 30% because models tend to draw them tight. On the Privacy page you click a box to turn its blur off or on, and drag on the photo to add one. New photos stay offline until you approve them.
+**Blur.** The model marks faces and readable license plates, and each box is enlarged by 30% because models tend to draw them tight. On the Privacy page you click a box to move it, resize it, turn its blur off or remove it, and drag on the photo to add one. Enlarge opens a photo full screen with zoom up to 400%, using a sharper copy made from the original, and the closer you zoom the smaller a box can be. New photos stay offline until you approve them.
 
-A blurred area is shrunk to a few pixels before it is smoothed, so it can't be sharpened back into a face. The blur is baked into every public image and your original stays untouched, so you can change your mind later. The AI can miss things, which is why you approve each photo yourself.
+A blurred area is shrunk to a few pixels before it is smoothed, so it can't be sharpened back into a face. Its edge fades softly outside the box, so everything inside stays fully covered. The blur is baked into every public image and your original stays untouched, so you can change your mind later. The AI can miss things, which is why you approve each photo yourself.
 
 ## Watermark
 

@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import sharp from 'sharp';
 import { openDb } from '../lib/db.js';
 import { hashPassword } from '../lib/auth.js';
-import { ingest, processPhoto, encodeAvif } from '../lib/images.js';
+import { blurAreas, ingest, processPhoto, encodeAvif } from '../lib/images.js';
 import { privacyView } from '../views/admin.js';
 import { cleanBoxes, parseScanReply, scanPhoto, reviewPhoto, privacyList } from '../lib/privacy.js';
 import { aiCalls, aiEnabled, getSetting, setSetting } from '../lib/settings.js';
@@ -148,10 +148,55 @@ describe('publishing gate', () => {
     assert.equal(db.prepare('SELECT image_version FROM photos').get().image_version, 1);
   });
 
+  it('fades the edge outside the box and keeps the inside fully covered', async () => {
+    const raw = { width: 400, height: 300, channels: 3 };
+    const before = Buffer.alloc(400 * 300 * 3);
+    for (let i = 0; i < before.length; i += 3) before.fill((i / 3) % 2 ? 255 : 0, i, i + 3);
+    const { data, info } = await blurAreas(before, raw, [{ x1: 0.25, y1: 1 / 3, x2: 0.5, y2: 0.6 }]);
+    assert.equal(info.channels, 3);
+    const at = (buf, x, y) => buf[(y * 400 + x) * 3];
+
+    const inside = [];
+    for (let y = 100; y < 180; y += 1) for (let x = 100; x < 200; x += 1) inside.push(at(data, x, y));
+    assert.ok(Math.max(...inside) - Math.min(...inside) < 40);
+
+    // 28 pixels of fade: part way there the stripes show at reduced contrast, past it they are untouched
+    const stripes = (buf, x, y) => Math.abs(at(buf, x, y) - at(buf, x + 1, y));
+    assert.ok(stripes(data, 90, 140) > 40 && stripes(data, 90, 140) < 215);
+    assert.equal(stripes(data, 70, 140), 255);
+    assert.equal(at(data, 300, 250), at(before, 300, 250));
+  });
+
+  it('bakes a blur as small as a few pixels', async () => {
+    const { db, dataDir, id } = await published();
+    reviewPhoto(db, id, [{ type: 'manual', x1: 0.5, y1: 0.5, x2: 0.501, y2: 0.501 }]);
+    await processPhoto(db, dataDir, id);
+    assert.equal(db.prepare('SELECT status FROM photos').get().status, 'ready');
+  });
+
   it('never serves the review copy publicly, and needs a session in the admin', async () => {
     const { app, id } = await published();
     assert.equal((await app.request(`/previews/${id}.jpg`)).status, 404);
     assert.equal((await app.request(`/admin/preview/${id}`, { headers: { 'cf-connecting-ip': '1.1.1.1' } })).status, 302);
+  });
+
+  it('makes the enlarged copy from the original, never stores it, and needs a session', async () => {
+    const { app, db, dataDir } = setup();
+    const sid = await login(app);
+    const big = await sharp({ create: { width: 4000, height: 2000, channels: 3, background: '#556677' } }).jpeg().toBuffer();
+    const { id } = await ingest(db, dataDir, big, 'big.jpg');
+    const get = (path, cookie = sid) => app.request(path, { headers: { cookie, 'cf-connecting-ip': '1.1.1.1' } });
+
+    assert.equal((await get(`/admin/preview/${id}/large`, '')).status, 302);
+    assert.equal((await get('/admin/preview/0000000000000000/large')).status, 404);
+    assert.equal((await get('/admin/preview/nope/large')).status, 404);
+
+    const res = await get(`/admin/preview/${id}/large`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    const { width, height } = await sharp(Buffer.from(await res.arrayBuffer())).metadata();
+    assert.deepEqual([width, height], [3200, 1600]);
+    assert.ok(!existsSync(join(dataDir, 'previews', `${id}-large.jpg`)));
   });
 });
 
