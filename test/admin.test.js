@@ -313,6 +313,38 @@ describe('Admin routes', () => {
     });
   });
 
+  describe('Logout', () => {
+    const login = async (app) => getCookie(await app.request('/admin/login', {
+      method: 'POST',
+      headers: { origin: 'http://localhost:3000' },
+      body: new URLSearchParams({ username: 'admin', password: 'correct-horse' }),
+    }));
+    const logout = (app, headers = {}) => app.request('/admin/logout', { method: 'POST', headers: { origin: 'http://localhost:3000', ...headers } });
+    const page = (app, cookie) => app.request('/admin/comments', { headers: { cookie: `sid=${cookie}` } });
+
+    it('ends every session, and a new login works', async () => {
+      const { app } = makeApp();
+      const copied = await login(app);
+      assert.equal((await page(app, copied)).status, 200);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+
+      assert.equal((await logout(app, { cookie: `sid=${copied}` })).status, 302);
+      assert.equal((await page(app, copied)).status, 302);
+
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      assert.equal((await page(app, await login(app))).status, 200);
+    });
+
+    it('a stranger calling logout changes nothing', async () => {
+      const { app, db } = makeApp();
+      const session = await login(app);
+      await logout(app);
+      await logout(app, { cookie: 'sid=123.456' });
+      assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'sessions_after'").get(), undefined);
+      assert.equal((await page(app, session)).status, 200);
+    });
+  });
+
   describe('Comment email', () => {
     it('offers a reply link, escapes it, and forgets the address on rejection', async () => {
       const { app, db } = makeApp();
@@ -338,6 +370,23 @@ describe('Admin routes', () => {
       });
       assert.equal(res.status, 200);
       assert.equal(db.prepare('SELECT email FROM comments WHERE id = 1').get().email, '');
+    });
+  });
+
+  describe('Tab icon', () => {
+    it('is on the login page and on signed-in pages', async () => {
+      const { app } = makeApp();
+      const icon = 'rel="icon" type="image/svg+xml" href="/favicon.svg"';
+      assert.ok((await (await app.request('/admin/login')).text()).includes(icon));
+      const loginRes = await app.request('/admin/login', {
+        method: 'POST',
+        headers: { origin: 'http://localhost:3000' },
+        body: new URLSearchParams({ username: 'admin', password: 'correct-horse' }),
+      });
+      const headers = { cookie: `sid=${getCookie(loginRes)}` };
+      for (const path of ['/admin', '/admin/photos', '/admin/albums', '/admin/comments', '/admin/trash', '/admin/settings', '/admin/stats', '/admin/captions', '/admin/privacy']) {
+        assert.ok((await (await app.request(path, { headers })).text()).includes(icon), path);
+      }
     });
   });
 

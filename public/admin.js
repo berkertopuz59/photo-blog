@@ -77,8 +77,11 @@
           xhr.onerror = () => reject(new Error('network'));
           xhr.send(form);
         });
-        if (result.status === 415) { status.textContent = 'Unsupported'; bar.classList.add('err'); return; }
-        if (!xhr.responseText) { status.textContent = 'Error'; bar.classList.add('err'); return; }
+        if (result.status >= 400) {
+          status.textContent = result.status === 415 ? 'Unsupported' : result.status === 413 ? 'Too large' : 'Error';
+          bar.classList.add('err');
+          return;
+        }
         const data = JSON.parse(xhr.responseText);
         bar.style.width = '100%';
         status.textContent = data.duplicate ? 'Duplicate' : 'Uploaded';
@@ -505,7 +508,8 @@
     if (approveAllPrivacy) {
       approveAllPrivacy.addEventListener('click', async () => {
         approveAllPrivacy.disabled = true;
-        for (const row of privacyListEl.querySelectorAll('.privacy-row')) {
+        // Approving ends the scan, so a photo the AI has not seen yet stays for later
+        for (const row of privacyListEl.querySelectorAll('.privacy-row:not([data-unscanned])')) {
           const res = await sendPrivacy(row, 'approve');
           if (res && res.ok) dropPrivacyRow(row);
         }
@@ -625,8 +629,11 @@
         const ids = [...selected];
         if (!ids.length) return;
         let body = { ids, action };
+        if (action === 'delete' && !confirm(`Move ${ids.length} photo${ids.length === 1 ? '' : 's'} to the trash? They leave the site now and can be restored for 30 days.`)) return;
+        if (action === 'cover' && ids.length !== 1) { selCount.textContent = 'Select one photo for the cover'; return; }
         if (action === 'move') {
           const sel = document.getElementById('move-album-select');
+          if (!sel.value) { selCount.textContent = 'Choose an album first'; return; }
           body.album_id = sel.value === 'null' ? null : Number(sel.value) || null;
         }
         const res = await fetch('/admin/api/photos/bulk', {
@@ -638,6 +645,8 @@
           ids.forEach(id => { const c = photoGrid.querySelector(`[data-id="${id}"]`); if (c) c.remove(); });
         } else if (res.ok) {
           location.reload();
+        } else if (action === 'cover') {
+          selCount.textContent = 'That photo has no album';
         }
       });
     }
@@ -707,17 +716,6 @@
         if (res && res.ok) location.reload();
         else { btn.disabled = false; btn.textContent = 'Failed, retry'; }
       }
-      if (btn.classList.contains('btn-set-cover')) {
-        // For simplicity, prompt for photo id
-        const pid = prompt('Photo ID for cover:');
-        if (pid) {
-          fetch('/admin/api/albums/' + id, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'Origin': location.origin },
-            body: JSON.stringify({ cover_photo_id: pid })
-          }).then(() => location.reload());
-        }
-      }
     });
   }
 
@@ -737,8 +735,7 @@
   }
 
   // --- Comments page ---
-  const commentList = document.getElementById('pending-list');
-  if (commentList) {
+  document.querySelectorAll('#pending-list, #all-list').forEach((commentList) => {
     commentList.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-id]');
       if (!btn) return;
@@ -756,6 +753,44 @@
         if (item) item.remove();
       }
     });
+  });
+
+  // --- Trash page ---
+  const trashListEl = document.getElementById('trash-list');
+  if (trashListEl) {
+    const errors = { duplicate: 'Uploaded again already', missing_original: 'Original is gone' };
+
+    trashListEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-trash-action]');
+      if (!btn) return;
+      const action = btn.dataset.trashAction;
+      if (action === 'erase' && !confirm('Erase this photo and its original for good? This cannot be undone.')) return;
+      const item = btn.closest('.comment-item');
+      btn.disabled = true;
+      const res = await fetch('/admin/api/trash/' + item.dataset.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      }).catch(() => null);
+      btn.disabled = false;
+      if (res && res.ok) {
+        item.remove();
+        if (!trashListEl.querySelector('.comment-item')) location.reload();
+      } else {
+        const data = res ? await res.json().catch(() => ({})) : {};
+        btn.textContent = errors[data.error] || 'Failed, retry';
+      }
+    });
+
+    const emptyBtn = document.getElementById('trash-empty');
+    if (emptyBtn) {
+      emptyBtn.addEventListener('click', async () => {
+        if (!confirm('Erase everything in the trash for good? This cannot be undone.')) return;
+        emptyBtn.disabled = true;
+        await fetch('/admin/api/trash/empty', { method: 'POST' }).catch(() => null);
+        location.reload();
+      });
+    }
   }
 
   function delay(ms) { return new Promise(r => setTimeout(r, ms)); }

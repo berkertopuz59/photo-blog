@@ -8,31 +8,20 @@ import { nowIso } from '../lib/db.js';
 import { captionDrafts, approvedCaptions, cleanLabels } from '../lib/captions.js';
 import { privacyList, reviewPhoto } from '../lib/privacy.js';
 import { ensurePreview, largePreview, previewPath } from '../lib/images.js';
+import { emptyTrash, erasePhoto, restorePhoto, trashList, trashPhoto, trashThumb } from '../lib/trash.js';
 import { loadWatermark, watermarkPreview } from '../lib/watermark.js';
 import { NUMBER_SETTINGS, SETTING_KEYS, aiCalls, aiConfigured, aiEnabled, getSetting, isOn, setSetting } from '../lib/settings.js';
 import { logEvent, queueStats, libraryStats, trafficStats, recentEvents } from '../lib/stats.js';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { readFile, readdir, stat, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getConnInfo } from '@hono/node-server/conninfo';
-import { adminView, loginView, photosView, albumsView, commentsView, statsView, captionsView, privacyView, settingsView, IMG_ID_RE, IMG_FILE_RE } from '../views/admin.js';
+import { adminView, loginView, photosView, albumsView, commentsView, statsView, captionsView, privacyView, settingsView, trashView, IMG_ID_RE, IMG_FILE_RE } from '../views/admin.js';
 import { escapeHtml } from '../views/html.js';
 
 const PHOTO_ID_RE = /^[a-f0-9]{16}$/;
 
 const ADMIN_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
-
-function deletePhotoHelper(db, dataDir, id) {
-  const row = db.prepare('SELECT original_ext FROM photos WHERE id = ?').get(id);
-  const ext = row ? row.original_ext : null;
-  if (ext) {
-    try { rmSync(join(dataDir, 'originals', `${id}.${ext}`), { force: true }); } catch {}
-  }
-  rmSync(join(dataDir, 'derived', id), { recursive: true, force: true });
-  rmSync(join(dataDir, 'previews', `${id}.jpg`), { force: true });
-  db.prepare('UPDATE albums SET cover_photo_id = NULL WHERE cover_photo_id = ?').run(id);
-  db.prepare('DELETE FROM photos WHERE id = ?').run(id);
-}
 
 async function folderBytes(dir) {
   const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
@@ -100,13 +89,17 @@ export function adminRoutes({ db, config, dataDir }) {
     await next();
   });
 
+  function sessionOk(c) {
+    const token = (c.req.header('cookie') || '').match(/(?:^|;\s*)sid=([^;]+)/)?.[1];
+    if (!token || !verifySession(config.sessionSecret, token)) return false;
+    return parseInt(token, 10) >= Number(getSetting(db, 'sessions_after') || 0);
+  }
+
   // Session guard + admin-anon rate limit for everyone without a valid session
   app.use('*', async (c, next) => {
     const path = c.req.path;
     const cookie = c.req.header('cookie') || '';
-    const match = cookie.match(/(?:^|;\s*)sid=([^;]+)/);
-    const token = match ? match[1] : null;
-    if (token && verifySession(config.sessionSecret, token)) {
+    if (sessionOk(c)) {
       await next();
       // Marks this browser so your own visits stay out of the stats
       if (!/(?:^|;\s*)owner=1/.test(cookie)) {
@@ -177,6 +170,8 @@ export function adminRoutes({ db, config, dataDir }) {
 
   // --- Logout ---
   app.post('/logout', (c) => {
+    // Ends every session, so a copied cookie stops working too. Only a signed-in visitor may do this.
+    if (sessionOk(c)) setSetting(db, 'sessions_after', String(Date.now()));
     const secure = config.isProd ? '; Secure' : '';
     c.header('Set-Cookie', `sid=; Path=/admin; HttpOnly; SameSite=Strict${secure}; Max-Age=0`);
     return c.redirect('/admin/login');
@@ -291,6 +286,30 @@ export function adminRoutes({ db, config, dataDir }) {
     return c.body(data);
   });
 
+  app.get('/trash', (c) => c.html(trashView(trashList(db), pendingCount())));
+
+  app.get('/trash/:id/thumb', async (c) => {
+    const id = c.req.param('id');
+    const path = PHOTO_ID_RE.test(id) ? trashThumb(dataDir, id) : null;
+    const data = path ? await readFile(path).catch(() => null) : null;
+    if (!data) return c.text('Not found', 404);
+    c.header('Content-Type', 'image/jpeg');
+    return c.body(data);
+  });
+
+  app.post('/api/trash/empty', (c) => c.json({ ok: true, erased: emptyTrash(db, dataDir) }));
+
+  app.post('/api/trash/:id', async (c) => {
+    const id = c.req.param('id');
+    if (!PHOTO_ID_RE.test(id)) return c.json({ error: 'not_found' }, 404);
+    const body = await c.req.json().catch(() => null);
+    if (body?.action === 'erase') return erasePhoto(db, dataDir, id) ? c.json({ ok: true }) : c.json({ error: 'not_found' }, 404);
+    if (body?.action !== 'restore') return c.json({ error: 'invalid_action' }, 400);
+    const result = restorePhoto(db, dataDir, id);
+    if (result === 'ok') return c.json({ ok: true });
+    return c.json({ error: result }, result === 'not_found' ? 404 : 409);
+  });
+
   app.get('/captions', (c) => {
     const approved = c.req.query('view') === 'approved';
     return c.html(captionsView(approved ? approvedCaptions(db) : captionDrafts(db), {
@@ -318,9 +337,13 @@ export function adminRoutes({ db, config, dataDir }) {
     if (!m) return c.text('Not found', 404);
     const width = m[1];
     const fmt = m[2];
-    const filePath = join(dataDir, 'derived', id, `${width}.${fmt}`);
+    const dir = join(dataDir, 'derived', id);
     try {
-      const buf = await readFile(filePath);
+      // A photo narrower than the thumbnail asked for only has its real width
+      const buf = await readFile(join(dir, `${width}.${fmt}`)).catch(async () => {
+        const file = (await readdir(dir)).find((name) => name.endsWith(`.${fmt}`));
+        return readFile(join(dir, file));
+      });
       const mime = fmt === 'avif' ? 'image/avif' : fmt === 'webp' ? 'image/webp' : 'image/jpeg';
       c.header('Content-Type', mime);
       c.header('Cache-Control', 'private, no-store');
@@ -458,15 +481,27 @@ export function adminRoutes({ db, config, dataDir }) {
     const body = await c.req.json().catch(() => ({}));
     const ids = (Array.isArray(body.ids) ? body.ids : []).filter((id) => PHOTO_ID_RE.test(id));
     const action = body.action;
-    if (!ids.length || !['publish', 'unpublish', 'delete', 'move'].includes(action)) {
+    if (!ids.length || !['publish', 'unpublish', 'delete', 'move', 'retry', 'cover'].includes(action)) {
       return c.json({ error: 'bad_request' }, 400);
     }
 
     if (action === 'delete') {
       for (const id of ids) {
-        deletePhotoHelper(db, dataDir, id);
+        trashPhoto(db, dataDir, id);
       }
       return c.json({ ok: true, deleted: ids.length });
+    }
+
+    if (action === 'retry') {
+      const stmt = db.prepare("UPDATE photos SET status = 'pending', error = NULL, image_version = image_version + 1 WHERE id = ? AND status = 'failed'");
+      let count = 0;
+      for (const id of ids) { count += stmt.run(id).changes; }
+      return c.json({ ok: true, changed: count });
+    }
+
+    if (action === 'cover') {
+      const { changes } = db.prepare('UPDATE albums SET cover_photo_id = ? WHERE id = (SELECT album_id FROM photos WHERE id = ?)').run(ids[0], ids[0]);
+      return changes ? c.json({ ok: true }) : c.json({ error: 'no_album' }, 400);
     }
 
     if (action === 'publish') {

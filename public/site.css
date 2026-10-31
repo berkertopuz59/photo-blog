@@ -266,6 +266,7 @@ a:hover { color: var(--text); }
 .album-desc {
   text-align: center;
   color: var(--muted);
+  white-space: pre-line;
   max-width: 56ch;
   margin: 0 auto 8px;
   padding: 0 24px;

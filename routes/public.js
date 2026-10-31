@@ -18,6 +18,8 @@ const FILE_RE = /^\d{1,5}\.(avif|webp|jpg)$/;
 const FONT_RE = /^[a-z0-9-]+\.woff2$/;
 const TAG_RE = /^[a-z0-9][a-z0-9 -]{0,29}$/;
 
+const DEFAULT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#f4611e"/><path fill="#0e0d0c" d="M12.2 8.5h7.6l1.7 2.8H25a2.5 2.5 0 0 1 2.5 2.5v8.7A2.5 2.5 0 0 1 25 25H7a2.5 2.5 0 0 1-2.5-2.5v-8.7A2.5 2.5 0 0 1 7 11.3h3.5z"/><circle cx="16" cy="17.8" r="4.2" fill="#f4611e"/></svg>`;
+
 const CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; font-src 'self'";
 
 const MIME = {
@@ -100,7 +102,7 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
       album.cover = cover;
       album.previews = db.prepare(`
         SELECT id, width, image_version FROM photos
-        WHERE album_id = ? AND status = 'ready' AND is_published = 1 AND id != ?
+        WHERE album_id = ? AND status = 'ready' AND is_published = 1 AND privacy_ok = 1 AND id != ?
         ORDER BY position ASC, taken_at DESC
         LIMIT 6
       `).all(album.id, cover ? cover.id : '');
@@ -120,28 +122,18 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
     }
   });
 
-  // Static files (read once at startup, served here). Revalidated, so a deploy shows at once.
+  // Static files (read once at startup, served here)
   for (const path of ['/site.css', '/site.js', '/static/admin.css', '/static/admin.js']) app.use(path, etag());
-  app.get('/site.css', (c) => {
-    c.header('Content-Type', 'text/css; charset=utf-8');
-    c.header('Cache-Control', 'no-cache');
-    return c.body(siteCss);
+  // The hashed URLs from lib/assets.js can never change, so only a bare URL revalidates
+  const asset = (path, type, body) => app.get(path, (c) => {
+    c.header('Content-Type', `${type}; charset=utf-8`);
+    c.header('Cache-Control', c.req.query('v') ? 'public, max-age=31536000, immutable' : 'no-cache');
+    return c.body(body);
   });
-  app.get('/site.js', (c) => {
-    c.header('Content-Type', 'application/javascript; charset=utf-8');
-    c.header('Cache-Control', 'no-cache');
-    return c.body(siteJs);
-  });
-  app.get('/static/admin.css', (c) => {
-    c.header('Content-Type', 'text/css; charset=utf-8');
-    c.header('Cache-Control', 'no-cache');
-    return c.body(adminCss);
-  });
-  app.get('/static/admin.js', (c) => {
-    c.header('Content-Type', 'application/javascript; charset=utf-8');
-    c.header('Cache-Control', 'no-cache');
-    return c.body(adminJs);
-  });
+  asset('/site.css', 'text/css', siteCss);
+  asset('/site.js', 'application/javascript', siteJs);
+  asset('/static/admin.css', 'text/css', adminCss);
+  asset('/static/admin.js', 'application/javascript', adminJs);
 
   // Font serving
   app.get('/fonts/:file', async (c) => {
@@ -158,6 +150,32 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
     } catch {
       return c.text('Not found', 404);
     }
+  });
+
+  const LIVE_PHOTOS = "status = 'ready' AND is_published = 1 AND privacy_ok = 1";
+
+  // data/favicon.svg replaces the default, the same way data/watermark.svg adds a signature
+  app.get('/favicon.svg', async (c) => {
+    const custom = await readFile(join(dataDir, 'favicon.svg'), 'utf-8').catch(() => null);
+    c.header('Content-Type', 'image/svg+xml');
+    c.header('Cache-Control', 'public, max-age=86400');
+    c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+    return c.body(custom ?? DEFAULT_ICON);
+  });
+
+  app.get('/robots.txt', (c) => c.text(views.robots()));
+
+  app.get('/sitemap.xml', (c) => {
+    const photos = db.prepare(`SELECT id, published_at FROM photos WHERE ${LIVE_PHOTOS} ORDER BY published_at DESC`).all();
+    const albums = listPublicAlbums();
+    c.header('Content-Type', 'application/xml; charset=utf-8');
+    return c.body(views.sitemap({ albums, photos }));
+  });
+
+  app.get('/feed.xml', (c) => {
+    const photos = db.prepare(`SELECT * FROM photos WHERE ${LIVE_PHOTOS} ORDER BY COALESCE(published_at, created_at) DESC LIMIT 30`).all();
+    c.header('Content-Type', 'application/rss+xml; charset=utf-8');
+    return c.body(views.feed({ photos }));
   });
 
   // Home page
@@ -325,7 +343,8 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
     try {
       const data = await readFile(filePath);
       c.header('Content-Type', mime);
-      c.header('Cache-Control', 'public, max-age=31536000, immutable');
+      // The edge drops it within a day, so a deleted, unpublished or newly blurred photo can't linger there
+      c.header('Cache-Control', 'public, max-age=31536000, s-maxage=86400, immutable');
       return c.body(data);
     } catch {
       return c.text('Not found', 404);
@@ -432,10 +451,8 @@ export function publicRoutes({ db, config, dataDir, fetchFn }) {
     }
   );
 
-  // 404
-  app.notFound((c) => {
-    return c.html(views.notFound(), 404);
-  });
+  // A route, not notFound(), because a mounted app's notFound() never runs
+  app.all('*', (c) => c.html(views.notFound(), 404));
 
   return app;
 }

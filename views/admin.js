@@ -4,6 +4,8 @@ import { assets } from '../lib/assets.js';
 export const IMG_ID_RE = /^[a-f0-9]{16}$/;
 export const IMG_FILE_RE = /^(\d+)\.(avif|webp|jpg)$/;
 
+const ICON = `<link rel="icon" type="image/svg+xml" href="/favicon.svg">`;
+
 const queuePanel = `<section id="queue-panel" class="queue-panel hidden" aria-live="polite">
   <div class="queue-head"><strong id="queue-title"></strong><span id="queue-detail"></span></div>
   <div class="progress"><div class="progress-bar" id="queue-bar"></div></div>
@@ -56,6 +58,7 @@ function nav(pendingCount = 0) {
   <a href="/admin/captions">Captions</a>
   <a href="/admin/privacy">Privacy</a>
   <a href="/admin/stats">Stats</a>
+  <a href="/admin/trash">Trash</a>
   <a href="/admin/settings">Settings</a>
   <form method="POST" action="/admin/logout" class="inline-form"><button type="submit" class="btn btn-sm">Logout</button></form>
 </nav>`;
@@ -63,7 +66,7 @@ function nav(pendingCount = 0) {
 
 export function loginView(msg) {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin Login</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Admin Login</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body"><div class="login-wrap">
 <h1>Sign in</h1>
 ${msg ? `<p class="alert">${escapeHtml(msg)}</p>` : ''}
@@ -80,7 +83,7 @@ ${msg ? `<p class="alert">${escapeHtml(msg)}</p>` : ''}
 export function adminView(albums, pendingCount = 0) {
   const opts = albums.map(a => `<option value="${a.id}">${escapeHtml(a.title)}</option>`).join('');
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Upload</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Upload</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body">
 ${nav(pendingCount)}
 <main class="admin-main">
@@ -114,7 +117,7 @@ export function photosView(photos, albums, filters, pendingCount = 0) {
       </div>
     </div>`).join('');
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Photos</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Photos</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body">
 ${nav(pendingCount)}
 <main class="admin-main">
@@ -129,6 +132,8 @@ ${nav(pendingCount)}
   <span id="sel-count"></span>
   <button class="btn btn-sm" data-action="publish">Publish</button>
   <button class="btn btn-sm" data-action="unpublish">Unpublish</button>
+  <button class="btn btn-sm" data-action="retry">Try again</button>
+  <button class="btn btn-sm" data-action="cover">Use as album cover</button>
   <button class="btn btn-sm" data-action="move">Move to…</button>
   <select id="move-album-select"><option value="">—</option>${albums.map(a=>`<option value="${a.id}">${escapeHtml(a.title)}</option>`).join('')}<option value="null">No album</option></select>
   <button class="btn btn-sm btn-danger" data-action="delete">Delete</button>
@@ -149,19 +154,19 @@ export function albumsView(albums, pendingCount = 0) {
       </td>
       <td class="album-count">${a.live_count} of ${a.photo_count} live${a.waiting_count ? `<a href="/admin/privacy">${a.waiting_count} waiting for privacy</a>` : ''}</td>
       <td><label class="switch"><input type="checkbox" data-field="is_published" ${a.is_published ? 'checked' : ''}><span></span></label></td>
-      <td>${escapeHtml(a.cover_photo_id || '—')}</td>
+      <td>${a.cover_photo_id ? `<img class="album-cover" src="/admin/img/${escapeHtml(a.cover_photo_id)}/480.webp" alt="" loading="lazy">` : 'Newest photo'}</td>
       <td>
         ${a.unpublished_count ? `<button class="btn btn-sm btn-publish-album">Publish all ${a.unpublished_count}</button>` : ''}
-        <button class="btn btn-sm btn-set-cover">Set cover</button>
         <button class="btn btn-sm btn-danger btn-del-album">Delete</button>
       </td>
     </tr>`).join('');
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Albums</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Albums</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body">
 ${nav(pendingCount)}
 <main class="admin-main">
 <h1>Albums</h1>
+<p class="settings-note">To choose a cover, select a photo on the Photos page and press Use as album cover.</p>
 <form id="create-album-form" class="inline-form">
   <input type="text" id="new-title" placeholder="Album title" required maxlength="200">
   <button type="submit" class="btn btn-sm">Create</button>
@@ -190,10 +195,12 @@ export function commentsView(pending, all) {
         <button class="btn btn-sm btn-approve" data-id="${c.id}">Approve</button>
         <button class="btn btn-sm" data-id="${c.id}">Reject</button>
         <button class="btn btn-sm btn-danger btn-delete-comment" data-id="${c.id}">Delete</button>
-      </div>` : `<span class="badge">${escapeHtml(c.status)}</span>`}
+      </div>` : `<div class="comment-actions"><span class="badge">${escapeHtml(c.status)}</span>
+        <button class="btn btn-sm btn-danger btn-delete-comment" data-id="${c.id}">Delete</button>
+      </div>`}
     </div>`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Comments</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Comments</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body">
 ${nav(pendingCount)}
 <main class="admin-main">
@@ -202,6 +209,33 @@ ${nav(pendingCount)}
 <div id="pending-list">${pending.map(c => item(c, true)).join('') || '<p>No pending comments.</p>'}</div>
 <h2>Other</h2>
 <div id="all-list">${all.map(c => item(c, false)).join('') || '<p>None.</p>'}</div>
+</main>
+<script src="${assets.adminJs}" defer></script>
+</body></html>`;
+}
+
+export function trashView(items, pendingCount = 0) {
+  const rows = items.map((t) => `
+    <div class="comment-item" data-id="${escapeHtml(t.id)}">
+      <div class="comment-thumb"><img src="/admin/trash/${escapeHtml(t.id)}/thumb" alt="" loading="lazy"></div>
+      <div class="comment-body">
+        <strong>${escapeHtml(t.original_name)}</strong>
+        <small class="trash-note">Erased for good in ${t.days_left} day${t.days_left === 1 ? '' : 's'}</small>
+      </div>
+      <div class="comment-actions">
+        <button class="btn btn-sm btn-approve" data-trash-action="restore">Restore</button>
+        <button class="btn btn-sm btn-danger" data-trash-action="erase">Erase now</button>
+      </div>
+    </div>`).join('');
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trash</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
+<body class="admin-body">
+${nav(pendingCount)}
+<main class="admin-main">
+<h1>Trash</h1>
+<p>Deleted photos leave the site at once and stay here for 30 days with their originals, comments and likes. Then they are erased for good.</p>
+${rows ? '<div class="caption-toolbar"><span></span><button class="btn btn-sm btn-danger" id="trash-empty">Empty trash</button></div>' : ''}
+<div id="trash-list">${rows || '<p class="caption-empty">The trash is empty.</p>'}</div>
 </main>
 <script src="${assets.adminJs}" defer></script>
 </body></html>`;
@@ -218,7 +252,7 @@ export function settingsView({ switches, watermark, ai, site }, pendingCount = 0
     ? '<p class="settings-note">No watermark file yet. Put a transparent SVG at <code>data/watermark.svg</code> to sign your photos.</p>'
     : switches.watermark_on ? `<p class="settings-note">${watermark.done} of ${watermark.total} photos have the current watermark.</p>` : '';
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Settings</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Settings</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body">
 ${nav(pendingCount)}
 <main class="admin-main">
@@ -275,7 +309,7 @@ export function statsView({ library, traffic, events, storage }, pendingCount = 
     </tr>`).join('');
   const eventCounts = events.counts.map(e => `<span class="badge">${escapeHtml(EVENT_LABELS[e.kind] || e.kind)}: ${e.n}</span>`).join(' ');
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stats</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Stats</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body">
 ${nav(pendingCount)}
 <main class="admin-main stats-page">
@@ -337,7 +371,7 @@ export function captionsView(drafts, { aiOn, approved = false }, pendingCount = 
     </div>`).join('');
   const intro = 'AI drafts a title, description, tags, moods and scene labels for each photo. Colors are measured from the image. Nothing goes public until you approve it.';
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Captions</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Captions</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body">
 ${nav(pendingCount)}
 <main class="admin-main">
@@ -356,7 +390,7 @@ export function privacyView(photos, { aiOn, reviewed }, pendingCount = 0) {
   const rows = photos.map(p => {
     const scan = p.privacy_scan === 'done' ? `${p.boxes.length} found by AI` : p.privacy_scan === 'failed' ? 'AI scan failed, check by hand' : 'Not scanned';
     return `
-    <div class="privacy-row" data-id="${escapeHtml(p.id)}">
+    <div class="privacy-row" data-id="${escapeHtml(p.id)}"${aiOn && p.privacy_scan === 'new' ? ' data-unscanned' : ''}>
       <div class="privacy-editor">
         <div class="privacy-zoombar">
           <small>${escapeHtml(p.original_name)}</small>
@@ -379,7 +413,7 @@ export function privacyView(photos, { aiOn, reviewed }, pendingCount = 0) {
     </div>`;
   }).join('');
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Privacy</title><link rel="stylesheet" href="${assets.adminCss}"></head>
+<title>Privacy</title>${ICON}<link rel="stylesheet" href="${assets.adminCss}"></head>
 <body class="admin-body">
 ${nav(pendingCount)}
 <main class="admin-main">

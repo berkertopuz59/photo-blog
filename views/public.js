@@ -1,10 +1,16 @@
 import { assets } from '../lib/assets.js';
 import { escapeHtml } from './html.js';
-import { derivedWidths } from '../lib/images.js';
+import { derivedWidths, thumbWidth } from '../lib/images.js';
 
 const GRID_SIZES = '(max-width:640px) 33vw, 320px';
 const MAIN_SIZES = 'min(100vw, 1600px)';
 const CARD_SIZES = '(max-width:640px) 180px, 240px';
+
+// The photo fits the stage's height, so a portrait photo is narrower than the screen
+function mainSizes(photo) {
+  const aspect = photo.width && photo.height ? photo.width / photo.height : 1.5;
+  return aspect < 1 ? `min(100vw, ${Math.round(aspect * 100)}vh)` : MAIN_SIZES;
+}
 
 function formatDate(iso) {
   const day = /^\d{4}-\d{2}-\d{2}/.exec(String(iso));
@@ -25,8 +31,8 @@ function pictureTag(photo, { isMain = false, sizes } = {}) {
   const widths = derivedWidths(photo.width || 960);
   const aspect = photo.width && photo.height ? (photo.width / photo.height) : 1.5;
   const alt = escapeHtml(photoMeta(photo).description || photo.caption || 'Photo');
-  const loading = isMain ? '' : ' loading="lazy"';
-  const sizesAttr = sizes || (isMain ? MAIN_SIZES : GRID_SIZES);
+  const loading = isMain ? ' fetchpriority="high"' : ' loading="lazy"';
+  const sizesAttr = sizes || (isMain ? mainSizes(photo) : GRID_SIZES);
   const placeholder = photo.placeholder
     ? ` style="background-image:url('${escapeHtml(photo.placeholder)}');background-size:cover;background-position:center;"`
     : '';
@@ -66,9 +72,7 @@ function albumCard(album, cardSizes) {
   inner += `<span class="card-overlay"><span class="card-title">${escapeHtml(album.title)}</span><span class="card-count">${album.photo_count} photo${album.photo_count !== 1 ? 's' : ''}</span></span>`;
   const flipThrough = album.previews && album.previews.length ? [...album.previews, album.cover] : [];
   const previews = flipThrough.map((p) => {
-    const sizes = derivedWidths(p.width || 960);
-    const width = sizes.filter((w) => w <= 960).at(-1) ?? sizes[0];
-    return `/img/${escapeHtml(p.id)}/${width}.webp`;
+    return `/img/${escapeHtml(p.id)}/${thumbWidth(p.width, 960)}.webp${p.image_version ? `?v=${p.image_version}` : ''}`;
   }).join(' ');
   const previewAttr = previews ? ` data-previews="${previews}"` : '';
   return `<a href="/a/${escapeHtml(album.slug)}" class="album-card"${previewAttr}>${inner}</a>`;
@@ -77,6 +81,10 @@ function albumCard(album, cardSizes) {
 export function publicViews({ config }) {
 const siteTitle = escapeHtml(config.siteTitle || 'Photos');
 const siteTagline = escapeHtml(config.siteTagline || 'Photographs');
+const siteUrl = String(config.siteUrl || '').replace(/\/$/, '');
+const absolute = (path) => escapeHtml(`${siteUrl}${path}`);
+const jpgPath = (photo, width) => `/img/${photo.id}/${width}.jpg${photo.image_version ? `?v=${photo.image_version}` : ''}`;
+const describe = (photo) => photoMeta(photo).description || photo.caption || '';
 const blogLink = config.blogUrl ? `<a href="${escapeHtml(config.blogUrl)}">Blog</a>` : '';
 
 function header(opts = {}) {
@@ -88,9 +96,28 @@ function footer() {
   return `<footer class="site-footer"><p>© ${new Date().getFullYear()} ${siteTitle}</p></footer>`;
 }
 
+// What a shared link shows, and what search engines read
+function metaTags({ title, description, path, photo, type = 'website' }) {
+  const tags = [`<meta property="og:site_name" content="${siteTitle}">`, `<meta property="og:title" content="${escapeHtml(title)}">`];
+  if (description) tags.push(`<meta name="description" content="${escapeHtml(description)}">`, `<meta property="og:description" content="${escapeHtml(description)}">`);
+  if (path) tags.push(`<link rel="canonical" href="${absolute(path)}">`, `<meta property="og:url" content="${absolute(path)}">`);
+  tags.push(`<meta property="og:type" content="${type}">`);
+  if (photo?.width && photo.height) {
+    const width = thumbWidth(photo.width, 1600);
+    const height = Math.round((width * photo.height) / photo.width);
+    tags.push(
+      `<meta property="og:image" content="${absolute(jpgPath(photo, width))}">`,
+      `<meta property="og:image:width" content="${width}">`,
+      `<meta property="og:image:height" content="${height}">`,
+      '<meta name="twitter:card" content="summary_large_image">',
+    );
+  }
+  return tags.join('');
+}
+
 function shell(title, bodyContent, opts = {}) {
   const preloads = `<link rel="preload" href="/fonts/instrument-serif-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>`;
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='%23f4611e'/%3E%3C/svg%3E"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} \u2014 ${siteTitle}</title>${preloads}<link rel="stylesheet" href="${assets.siteCss}"></head><body>${header(opts)}<main>${bodyContent}</main>${footer()}<script src="${assets.siteJs}" defer></script></body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} \u2014 ${siteTitle}</title>${metaTags({ title, ...opts })}<link rel="alternate" type="application/rss+xml" title="${siteTitle}" href="/feed.xml">${preloads}<link rel="stylesheet" href="${assets.siteCss}"></head><body>${header(opts)}<main>${bodyContent}</main>${footer()}<script src="${assets.siteJs}" defer></script></body></html>`;
 }
 
   return {
@@ -122,7 +149,7 @@ function shell(title, bodyContent, opts = {}) {
         pagination += '</nav>';
       }
 
-      return shell('Photos', masthead + albumStrip + grid + pagination, { hideTitle: true });
+      return shell('Photos', masthead + albumStrip + grid + pagination, { hideTitle: true, path: '/', description: config.siteTagline, photo: photos[0] });
     },
 
     albums({ albums }) {
@@ -136,7 +163,7 @@ function shell(title, bodyContent, opts = {}) {
       } else {
         content += '<p class="empty">No albums yet.</p>';
       }
-      return shell('Albums', content);
+      return shell('Albums', content, { path: '/albums' });
     },
 
     explore({ moods, details, colors, tags }) {
@@ -158,7 +185,7 @@ function shell(title, bodyContent, opts = {}) {
         content += '<p class="empty">No photos in this album.</p>';
       }
       content += '</div>';
-      return shell(album.title, content);
+      return shell(album.title, content, { path: album.slug ? `/a/${album.slug}` : null, description: album.description, photo: photos[0] });
     },
 
     photoDetail({ photo, album, liked, likeCount, comments, prev, next, navQuery = '', turnstileSiteKey, showComments = true, showLikes = true, showFullSize = true }) {
@@ -252,7 +279,27 @@ function shell(title, bodyContent, opts = {}) {
 
       const content = `<article class="photo-page">${backLink}${stage}${touchNav}<div class="photo-columns">${leftCol}${rightCol}</div></article>`;
 
-      return shell(photo.caption || 'Photo', content);
+      return shell(photo.caption || 'Photo', content, { path: `/p/${photo.id}`, description: describe(photo), photo, type: 'article' });
+    },
+
+    robots() {
+      return `User-agent: *\nDisallow: /admin\nSitemap: ${siteUrl}/sitemap.xml\n`;
+    },
+
+    sitemap({ albums, photos }) {
+      const url = (path, day) => `<url><loc>${absolute(path)}</loc>${day ? `<lastmod>${escapeHtml(String(day).slice(0, 10))}</lastmod>` : ''}</url>`;
+      const urls = [url('/'), url('/albums'), url('/explore'), ...albums.map((a) => url(`/a/${a.slug}`)), ...photos.map((p) => url(`/p/${p.id}`, p.published_at))];
+      return `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join('')}</urlset>`;
+    },
+
+    feed({ photos }) {
+      const items = photos.map((p) => {
+        const image = absolute(jpgPath(p, thumbWidth(p.width, 1600)));
+        const text = escapeHtml(describe(p));
+        const body = `<p><img src="${image}" alt="${text}"></p>${text ? `<p>${text}</p>` : ''}`;
+        return `<item><title>${escapeHtml(p.caption || 'Photo')}</title><link>${absolute(`/p/${p.id}`)}</link><guid>${absolute(`/p/${p.id}`)}</guid><pubDate>${new Date(p.published_at || p.created_at).toUTCString()}</pubDate><description>${escapeHtml(body)}</description></item>`;
+      }).join('');
+      return `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>${siteTitle}</title><link>${absolute('/')}</link><description>${siteTagline}</description>${items}</channel></rss>`;
     },
 
     notFound() {
